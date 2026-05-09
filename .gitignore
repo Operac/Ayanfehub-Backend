@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment — contains DB credentials, API keys, JWT secret
+.env
+.env.*
+!.env.example
+
+# TypeScript build output
+dist/
+build/
+
+# Uploaded files (now stored on Cloudinary, but keep the dir pattern safe)
+uploads/
+
+# Prisma generated client (regenerated via `prisma generate`)
+prisma/generated/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

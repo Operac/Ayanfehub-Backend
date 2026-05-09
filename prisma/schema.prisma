@@ -1,0 +1,497 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── USERS ───────────────────────────────────────────────────────────────────
+
+model User {
+  id                String   @id @default(uuid())
+  email             String?  @unique
+  phone             String   @unique
+  passwordHash      String   @map("password_hash")
+  fullName          String?  @map("full_name")
+  avatarUrl         String?  @map("avatar_url")
+  role              UserRole @default(CUSTOMER)
+  userType          UserType @default(LOCAL) @map("user_type")
+  preferredCurrency Currency @default(NGN) @map("preferred_currency")
+  whatsappOptedIn   Boolean  @default(true) @map("whatsapp_opted_in")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  addresses        DeliveryAddress[]
+  orders           Order[]
+  whatsappMessages WhatsappMessage[]
+  reviews          Review[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  OPS_MANAGER
+  HUB_STAFF
+  SUPPORT
+  VENDOR
+  ARTISAN
+
+  @@map("user_role")
+}
+
+enum UserType {
+  LOCAL
+  DIASPORA
+
+  @@map("user_type")
+}
+
+enum Currency {
+  NGN
+  GBP
+  USD
+  EUR
+
+  @@map("currency")
+}
+
+// ─── MARKETS ─────────────────────────────────────────────────────────────────
+
+model Market {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
+  category  String
+  imageUrl  String?  @map("image_url")
+  isActive  Boolean  @default(false) @map("is_active")
+  phase     Int      @default(1)
+  lat       Decimal? @db.Decimal(10, 8)
+  lng       Decimal? @db.Decimal(11, 8)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  vendors Vendor[]
+  runDays RunDay[]
+  agents  MarketAgent[]
+
+  @@map("markets")
+}
+
+model RunDay {
+  id                    String  @id @default(uuid())
+  marketId              String  @map("market_id")
+  dayOfWeek             Int     @map("day_of_week") // 0=Sun 6=Sat
+  cutoffHour            Int     @default(20) @map("cutoff_hour")
+  isMasterConsolidation Boolean @default(false) @map("is_master_consolidation")
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@map("run_days")
+}
+
+// ─── DELIVERY ─────────────────────────────────────────────────────────────────
+
+model DeliveryZone {
+  id                         String  @id @default(uuid())
+  name                       String
+  isActive                   Boolean @default(true) @map("is_active")
+  deliveryFeeNgn             Decimal @map("delivery_fee_ngn") @db.Decimal(10, 2)
+  consolidatedDeliveryFeeNgn Decimal @map("consolidated_delivery_fee_ngn") @db.Decimal(10, 2)
+
+  addresses DeliveryAddress[]
+  orders    Order[]
+
+  @@map("delivery_zones")
+}
+
+model DeliveryAddress {
+  id                  String   @id @default(uuid())
+  userId              String   @map("user_id")
+  label               String? // "Home", "Office", "Mum's place"
+  landmarkDescription String?  @map("landmark_description")
+  googlePlaceId       String?  @map("google_place_id")
+  lat                 Decimal? @db.Decimal(10, 8)
+  lng                 Decimal? @db.Decimal(11, 8)
+  deliveryZoneId      String?  @map("delivery_zone_id")
+  isDefault           Boolean  @default(false) @map("is_default")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveryZone DeliveryZone? @relation(fields: [deliveryZoneId], references: [id], onDelete: SetNull)
+  orders       Order[]
+
+  @@index([userId, isDefault])
+  @@map("delivery_addresses")
+}
+
+// ─── VENDORS ──────────────────────────────────────────────────────────────────
+
+model Vendor {
+  id                   String             @id @default(uuid())
+  userId               String?            @map("user_id")
+  marketId             String             @map("market_id")
+  businessName         String             @map("business_name")
+  contactName          String?            @map("contact_name")
+  phone                String?
+  stallReference       String?            @map("stall_reference")
+  verificationStatus   VerificationStatus @default(PENDING) @map("verification_status")
+  verifiedAt           DateTime?          @map("verified_at")
+  verifiedBy           String?            @map("verified_by")
+  bankAccountNumber    String?            @map("bank_account_number")
+  bankCode             String?            @map("bank_code")
+  ratingAverage        Decimal?           @map("rating_average") @db.Decimal(3, 2)
+  totalOrdersFulfilled Int                @default(0) @map("total_orders_fulfilled")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  market       Market       @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  products     Product[]
+  priceEntries PriceEntry[]
+  orderItems   OrderItem[]
+  reviews      Review[]
+
+  @@index([marketId, verificationStatus])
+  @@map("vendors")
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  SUSPENDED
+
+  @@map("verification_status")
+}
+
+// ─── CATEGORIES ───────────────────────────────────────────────────────────────
+
+model Category {
+  id       String  @id @default(uuid())
+  name     String
+  slug     String  @unique
+  iconUrl  String? @map("icon_url")
+  parentId String? @map("parent_id")
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@map("categories")
+}
+
+// ─── PRODUCTS ─────────────────────────────────────────────────────────────────
+
+model Product {
+  id               String   @id @default(uuid())
+  vendorId         String   @map("vendor_id")
+  marketId         String   @map("market_id")
+  categoryId       String?  @map("category_id")
+  name             String
+  description      String?
+  unit             String // "kg", "paint bucket", "bag (50kg)", "dozen"
+  minOrderQuantity Decimal  @default(1) @map("min_order_quantity") @db.Decimal(10, 2)
+  imageUrls        String[] @map("image_urls")
+  isSeasonal       Boolean  @default(false) @map("is_seasonal")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  vendor       Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  category     Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  priceEntries PriceEntry[]
+  orderItems   OrderItem[]
+
+  @@index([marketId, vendorId, isActive])
+  @@map("products")
+}
+
+// ─── PRICE INTELLIGENCE ───────────────────────────────────────────────────────
+
+model MarketAgent {
+  id                       String      @id @default(uuid())
+  fullName                 String      @map("full_name")
+  phone                    String      @unique
+  marketId                 String      @map("market_id")
+  employmentStatus         AgentStatus @default(ACTIVE) @map("employment_status")
+  totalVerifiedSubmissions Int         @default(0) @map("total_verified_submissions")
+  accuracyScore            Decimal?    @map("accuracy_score") @db.Decimal(5, 2)
+  createdAt                DateTime    @default(now()) @map("created_at")
+  updatedAt                DateTime    @updatedAt @map("updated_at")
+
+  market       Market       @relation(fields: [marketId], references: [id], onDelete: SetNull)
+  priceEntries PriceEntry[]
+  orderItems   OrderItem[]
+
+  @@index([marketId, employmentStatus])
+  @@map("market_agents")
+}
+
+enum AgentStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+
+  @@map("agent_status")
+}
+
+model PriceEntry {
+  id                 String            @id @default(uuid())
+  productId          String            @map("product_id")
+  vendorId           String            @map("vendor_id")
+  priceNgn           Decimal           @map("price_ngn") @db.Decimal(10, 2)
+  recordedBy         String?           @map("recorded_by")
+  recordedAt         DateTime          @default(now()) @map("recorded_at")
+  verificationStatus PriceVerifyStatus @default(PENDING) @map("verification_status")
+  isCurrent          Boolean           @default(false) @map("is_current")
+  notes              String?
+
+  product Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  vendor  Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  agent   MarketAgent? @relation(fields: [recordedBy], references: [id], onDelete: SetNull)
+
+  @@index([productId, isCurrent])
+  @@index([verificationStatus])
+  @@index([vendorId, recordedAt])
+  @@map("price_entries")
+}
+
+enum PriceVerifyStatus {
+  PENDING
+  VERIFIED
+  FLAGGED
+
+  @@map("price_verify_status")
+}
+
+// ─── ORDERS ───────────────────────────────────────────────────────────────────
+
+model Order {
+  id                    String      @id @default(uuid())
+  orderNumber           String      @unique @map("order_number") // AYF-2024-00001
+  userId                String      @map("user_id")
+  status                OrderStatus @default(PENDING_PAYMENT)
+  deliveryAddressId     String?     @map("delivery_address_id")
+  deliveryZoneId        String?     @map("delivery_zone_id")
+  scheduledDeliveryDate DateTime?   @map("scheduled_delivery_date") @db.Date
+  isConsolidated        Boolean     @default(false) @map("is_consolidated")
+  subtotalNgn           Decimal     @map("subtotal_ngn") @db.Decimal(10, 2)
+  deliveryFeeNgn        Decimal     @map("delivery_fee_ngn") @db.Decimal(10, 2)
+  serviceFeeNgn         Decimal     @map("service_fee_ngn") @db.Decimal(10, 2)
+  totalNgn              Decimal     @map("total_ngn") @db.Decimal(10, 2)
+  currencyPaid          Currency    @default(NGN) @map("currency_paid")
+  fxRate                Decimal?    @map("fx_rate") @db.Decimal(10, 4)
+  paymentMethod         String?     @map("payment_method")
+  paystackReference     String?     @unique @map("paystack_reference")
+  specialInstructions   String?     @map("special_instructions")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @updatedAt @map("updated_at")
+
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveryAddress  DeliveryAddress?     @relation(fields: [deliveryAddressId], references: [id])
+  deliveryZone     DeliveryZone?        @relation(fields: [deliveryZoneId], references: [id])
+  items            OrderItem[]
+  statusHistory    OrderStatusHistory[]
+  whatsappMessages WhatsappMessage[]
+  payment          Payment?
+  reviews          Review[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledDeliveryDate])
+  @@index([deliveryZoneId, scheduledDeliveryDate])
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAYMENT_CONFIRMED
+  SOURCING
+  AT_HUB
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  REFUND_INITIATED
+
+  @@map("order_status")
+}
+
+model OrderItem {
+  id                String         @id @default(uuid())
+  orderId           String         @map("order_id")
+  productId         String         @map("product_id")
+  vendorId          String         @map("vendor_id")
+  marketId          String         @map("market_id")
+  quantity          Decimal        @db.Decimal(10, 2)
+  unit              String
+  priceNgnAtOrder   Decimal        @map("price_ngn_at_order") @db.Decimal(10, 2)
+  subtotalNgn       Decimal        @map("subtotal_ngn") @db.Decimal(10, 2)
+  sourcingStatus    SourcingStatus @default(PENDING) @map("sourcing_status")
+  sourcedByAgentId  String?        @map("sourced_by_agent_id")
+  substitutionNotes String?        @map("substitution_notes")
+
+  order   Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  vendor  Vendor       @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  agent   MarketAgent? @relation(fields: [sourcedByAgentId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([vendorId, sourcingStatus])
+  @@map("order_items")
+}
+
+enum SourcingStatus {
+  PENDING
+  SOURCED
+  SUBSTITUTED
+  UNAVAILABLE
+
+  @@map("sourcing_status")
+}
+
+model OrderStatusHistory {
+  id        String   @id @default(uuid())
+  orderId   String   @map("order_id")
+  status    String
+  note      String?
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+// ─── WHATSAPP ─────────────────────────────────────────────────────────────────
+
+model WhatsappMessage {
+  id          String           @id @default(uuid())
+  userId      String?          @map("user_id")
+  orderId     String?          @map("order_id")
+  direction   MessageDirection
+  messageType String?          @map("message_type")
+  messageBody String?          @map("message_body")
+  twilioSid   String?          @map("twilio_sid")
+  status      String?
+  sentAt      DateTime         @default(now()) @map("sent_at")
+
+  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@map("whatsapp_messages")
+}
+
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+
+  @@map("message_direction")
+}
+
+// ─── ARTISANS ─────────────────────────────────────────────────────────────────
+
+model Artisan {
+  id                 String             @id @default(uuid())
+  userId             String?            @map("user_id")
+  name               String
+  category           String
+  bio                String?
+  portfolioImages    String[]           @map("portfolio_images")
+  verificationStatus VerificationStatus @default(PENDING) @map("verification_status")
+  isAvailable        Boolean            @default(true) @map("is_available")
+  ratingAverage      Decimal?           @map("rating_average") @db.Decimal(3, 2)
+  phone              String?
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  services ArtisanService[]
+  reviews  Review[]
+
+  @@map("artisans")
+}
+
+model ArtisanService {
+  id             String   @id @default(uuid())
+  artisanId      String   @map("artisan_id")
+  serviceName    String   @map("service_name")
+  priceNgn       Decimal  @map("price_ngn") @db.Decimal(10, 2)
+  description    String?
+  turnaroundDays Int?     @map("turnaround_days")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  artisan Artisan @relation(fields: [artisanId], references: [id], onDelete: Cascade)
+
+  @@map("artisan_services")
+}
+
+// ─── SHORTLETS ────────────────────────────────────────────────────────────────
+
+model Apartment {
+  id           String   @id @default(uuid())
+  userId       String?  @map("user_id")
+  name         String
+  location     String
+  ratePerNight Decimal  @map("rate_per_night") @db.Decimal(10, 2)
+  images       String[]
+  isAvailable  Boolean  @default(true) @map("is_available")
+  isVerified   Boolean  @default(false) @map("is_verified")
+  amenities    String[]
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("apartments")
+}
+
+// ─── PAYMENTS ─────────────────────────────────────────────────────────────────
+
+model Payment {
+  id        String        @id @default(uuid())
+  orderId   String        @unique @map("order_id")
+  amount    Decimal       @db.Decimal(10, 2)
+  reference String        @unique
+  status    PaymentStatus @default(PENDING) @map("payment_status")
+  metadata  String? // JSON stringified Flutterwave response
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([reference])
+  @@index([status, createdAt])
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+
+  @@map("payment_status")
+}
+
+// ─── REVIEWS & RATINGS ────────────────────────────────────────────────────────
+
+model Review {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  vendorId  String?  @map("vendor_id")
+  artisanId String?  @map("artisan_id")
+  orderId   String?  @map("order_id")
+  rating    Int      @db.SmallInt // 1-5
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vendor  Vendor?  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  artisan Artisan? @relation(fields: [artisanId], references: [id], onDelete: Cascade)
+  order   Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([vendorId, createdAt])
+  @@index([artisanId, createdAt])
+  @@index([orderId])
+  @@map("reviews")
+}
