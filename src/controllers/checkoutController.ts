@@ -40,7 +40,11 @@ export const validatePrices = async (req: Request, res: Response) => {
     }
 
     const products = await prisma.product.findMany({
-      where: { id: { in: itemIds }, isActive: true },
+      where: {
+        id: { in: itemIds },
+        isActive: true,
+        approvalStatus: 'APPROVED'
+      },
       include: {
         priceEntries: { where: { isCurrent: true }, take: 1 }
       }
@@ -118,7 +122,11 @@ export const initiatePayment = async (req: Request, res: Response) => {
     }
 
     const products = await prisma.product.findMany({
-      where: { id: { in: items.map(i => i.id) }, isActive: true },
+      where: {
+        id: { in: items.map(i => i.id) },
+        isActive: true,
+        approvalStatus: 'APPROVED'
+      },
       include: { priceEntries: { where: { isCurrent: true }, take: 1 } }
     });
 

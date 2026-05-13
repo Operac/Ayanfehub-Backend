@@ -252,3 +252,426 @@ export const confirmShortlet = async (req: Request, res: Response) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+// ─── ADMIN CONTENT CREATION ───────────────────────────────────────────────────────
+
+/**
+ * Admin creates a new vendor (either links existing user or creates new)
+ */
+export const createVendor = async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      businessName: z.string().min(2),
+      marketId: z.string().uuid(),
+      contactName: z.string().min(2),
+      phone: z.string().min(10),
+      email: z.string().email(),
+      password: z.string().min(6).optional(),
+      linkExistingUserId: z.string().uuid().optional(),
+    });
+
+    const data = schema.parse(req.body);
+
+    // If linking existing user, verify user exists
+    let userId: string;
+    if (data.linkExistingUserId) {
+      const user = await prisma.user.findUnique({ where: { id: data.linkExistingUserId } });
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      userId = data.linkExistingUserId;
+    } else {
+      // Create new user with email and password
+      if (!data.password) return res.status(400).json({ message: 'Password required when creating new user' });
+
+      const bcrypt = require('bcryptjs');
+      const passwordHash = await bcrypt.hash(data.password, 10);
+
+      const newUser = await prisma.user.create({
+        data: {
+          email: data.email,
+          phone: data.phone,
+          passwordHash,
+          fullName: data.contactName,
+          role: 'VENDOR'
+        }
+      });
+      userId = newUser.id;
+    }
+
+    // Create vendor (auto-verified since admin created it)
+    const vendor = await prisma.vendor.create({
+      data: {
+        userId,
+        marketId: data.marketId,
+        businessName: data.businessName,
+        contactName: data.contactName,
+        phone: data.phone,
+        verificationStatus: 'VERIFIED',
+        createdByAdmin: true,
+        verifiedAt: new Date(),
+        verifiedBy: (req as any).user?.id
+      },
+      include: { market: { select: { name: true } } }
+    });
+
+    // Notify vendor
+    const NotificationService = require('../services/notificationService').default;
+    NotificationService.notifyVendorCreated(userId, data.email, data.password);
+
+    res.json({
+      message: 'Vendor created successfully',
+      vendor: {
+        ...vendor,
+        userId
+      }
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('createVendor failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Admin creates a new artisan
+ */
+export const createArtisan = async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(2),
+      category: z.string().min(2),
+      phone: z.string().min(10),
+      email: z.string().email(),
+      bio: z.string().optional(),
+      password: z.string().min(6).optional(),
+      linkExistingUserId: z.string().uuid().optional(),
+    });
+
+    const data = schema.parse(req.body);
+
+    let userId: string;
+    if (data.linkExistingUserId) {
+      const user = await prisma.user.findUnique({ where: { id: data.linkExistingUserId } });
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      userId = data.linkExistingUserId;
+    } else {
+      if (!data.password) return res.status(400).json({ message: 'Password required when creating new user' });
+
+      const bcrypt = require('bcryptjs');
+      const passwordHash = await bcrypt.hash(data.password, 10);
+
+      const newUser = await prisma.user.create({
+        data: {
+          email: data.email,
+          phone: data.phone,
+          passwordHash,
+          fullName: data.name,
+          role: 'ARTISAN'
+        }
+      });
+      userId = newUser.id;
+    }
+
+    const artisan = await prisma.artisan.create({
+      data: {
+        userId,
+        name: data.name,
+        category: data.category,
+        bio: data.bio,
+        phone: data.phone,
+        verificationStatus: 'VERIFIED',
+        createdByAdmin: true
+      }
+    });
+
+    const NotificationService = require('../services/notificationService').default;
+    NotificationService.notifyArtisanCreated(userId, data.email, data.password);
+
+    res.json({
+      message: 'Artisan created successfully',
+      artisan: {
+        ...artisan,
+        userId
+      }
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('createArtisan failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Admin creates a product for a vendor (can bypass approval)
+ */
+export const createAdminProduct = async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      vendorId: z.string().uuid(),
+      name: z.string().min(2),
+      description: z.string().optional(),
+      unit: z.string().min(1),
+      categoryId: z.string().uuid().optional(),
+      priceNgn: z.number().positive(),
+      stockQuantity: z.number().int().positive().optional(),
+      approvalStatus: z.enum(['PENDING_APPROVAL', 'APPROVED']).default('APPROVED'),
+      imageUrls: z.array(z.string().url()).optional()
+    });
+
+    const data = schema.parse(req.body);
+
+    const vendor = await prisma.vendor.findUnique({
+      where: { id: data.vendorId },
+      select: { marketId: true }
+    });
+    if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
+
+    const product = await prisma.product.create({
+      data: {
+        vendorId: data.vendorId,
+        marketId: vendor.marketId,
+        name: data.name,
+        description: data.description,
+        unit: data.unit,
+        categoryId: data.categoryId,
+        imageUrls: data.imageUrls || [],
+        stockQuantity: data.stockQuantity,
+        approvalStatus: data.approvalStatus,
+        approvedAt: data.approvalStatus === 'APPROVED' ? new Date() : undefined,
+        approvedBy: data.approvalStatus === 'APPROVED' ? (req as any).user?.id : undefined
+      },
+      include: {
+        vendor: { select: { businessName: true } },
+        category: { select: { name: true } }
+      }
+    });
+
+    // Create price entry
+    await prisma.priceEntry.create({
+      data: {
+        productId: product.id,
+        vendorId: data.vendorId,
+        priceNgn: data.priceNgn,
+        isCurrent: true,
+        recordedBy: (req as any).user?.id
+      }
+    });
+
+    res.json({
+      message: 'Product created successfully',
+      product
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('createAdminProduct failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Admin creates an artisan service
+ */
+export const createArtisanService = async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      artisanId: z.string().uuid(),
+      serviceName: z.string().min(2),
+      priceNgn: z.number().positive(),
+      description: z.string().optional(),
+      turnaroundDays: z.number().int().positive().optional()
+    });
+
+    const data = schema.parse(req.body);
+
+    const artisan = await prisma.artisan.findUnique({ where: { id: data.artisanId } });
+    if (!artisan) return res.status(404).json({ message: 'Artisan not found' });
+
+    const service = await prisma.artisanService.create({
+      data: {
+        artisanId: data.artisanId,
+        serviceName: data.serviceName,
+        priceNgn: data.priceNgn,
+        description: data.description,
+        turnaroundDays: data.turnaroundDays
+      }
+    });
+
+    res.json({
+      message: 'Service created successfully',
+      service
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('createArtisanService failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Admin creates a shortlet
+ */
+export const createShortlet = async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(2),
+      location: z.string().min(2),
+      ratePerNight: z.number().positive(),
+      amenities: z.array(z.string()).optional(),
+      images: z.array(z.string().url()).optional(),
+      email: z.string().email(),
+      password: z.string().min(6).optional(),
+      linkExistingUserId: z.string().uuid().optional(),
+    });
+
+    const data = schema.parse(req.body);
+
+    let userId: string | undefined;
+    if (data.linkExistingUserId) {
+      const user = await prisma.user.findUnique({ where: { id: data.linkExistingUserId } });
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      userId = data.linkExistingUserId;
+    } else if (data.email && data.password) {
+      const bcrypt = require('bcryptjs');
+      const passwordHash = await bcrypt.hash(data.password, 10);
+
+      const newUser = await prisma.user.create({
+        data: {
+          email: data.email,
+          phone: data.email, // Use email as fallback for phone
+          passwordHash,
+          fullName: data.name || 'Shortlet Manager',
+          role: 'CUSTOMER'
+        }
+      });
+      userId = newUser.id;
+    }
+
+    const apartment = await prisma.apartment.create({
+      data: {
+        userId,
+        name: data.name,
+        location: data.location,
+        ratePerNight: data.ratePerNight,
+        amenities: data.amenities || [],
+        images: data.images || [],
+        createdByAdmin: true
+      }
+    });
+
+    const NotificationService = require('../services/notificationService').default;
+    if (userId && data.email) {
+      NotificationService.notifyShortletCreated(userId, data.email, data.name, data.password);
+    }
+
+    res.json({
+      message: 'Shortlet created successfully',
+      apartment: {
+        ...apartment,
+        userId
+      }
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('createShortlet failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Admin approves or rejects a product
+ */
+export const approveOrRejectProduct = async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      productId: z.string().uuid(),
+      approvalStatus: z.enum(['APPROVED', 'REJECTED']),
+      rejectionReason: z.string().optional()
+    });
+
+    const data = schema.parse(req.body);
+
+    const product = await prisma.product.findUnique({
+      where: { id: data.productId },
+      include: { vendor: { select: { id: true, businessName: true } } }
+    });
+
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    const updated = await prisma.product.update({
+      where: { id: data.productId },
+      data: {
+        approvalStatus: data.approvalStatus as any,
+        approvedAt: new Date(),
+        approvedBy: (req as any).user?.id,
+        rejectionReason: data.approvalStatus === 'REJECTED' ? data.rejectionReason : null
+      },
+      include: {
+        vendor: { select: { id: true, businessName: true } },
+        category: { select: { name: true } }
+      }
+    });
+
+    // Notify vendor
+    const NotificationService = require('../services/notificationService').default;
+    if (data.approvalStatus === 'APPROVED') {
+      NotificationService.notifyProductApproved(product.vendor.id, product.name);
+    } else {
+      NotificationService.notifyProductRejected(product.vendor.id, product.name, data.rejectionReason || 'No reason provided');
+    }
+
+    res.json({
+      message: `Product ${data.approvalStatus.toLowerCase()}`,
+      product: updated
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('approveOrRejectProduct failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Admin gets list of pending products for approval
+ */
+export const getPendingProducts = async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, parseInt(String(req.query.page ?? 1)));
+    const limit = Math.min(50, parseInt(String(req.query.limit ?? 20)));
+    const marketId = req.query.marketId ? String(req.query.marketId) : undefined;
+    const vendorId = req.query.vendorId ? String(req.query.vendorId) : undefined;
+
+    const where: any = { approvalStatus: 'PENDING_APPROVAL' };
+    if (marketId) where.marketId = marketId;
+    if (vendorId) where.vendorId = vendorId;
+
+    const [products, total] = await Promise.all([
+      prisma.product.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          vendor: { select: { id: true, businessName: true } },
+          category: { select: { name: true } },
+          priceEntries: { where: { isCurrent: true }, select: { priceNgn: true }, take: 1 }
+        }
+      }),
+      prisma.product.count({ where })
+    ]);
+
+    const formattedProducts = products.map(p => ({
+      ...p,
+      currentPrice: p.priceEntries[0]?.priceNgn
+    }));
+
+    res.json({
+      products: formattedProducts,
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit)
+    });
+  } catch (error) {
+    logger.error('getPendingProducts failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};

@@ -11,6 +11,7 @@ export const searchMarkets = async (req: Request, res: Response) => {
     const products = await prisma.product.findMany({
       where: {
         isActive: true,
+        approvalStatus: 'APPROVED',
         ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}),
         ...(category ? { category: { name: { equals: category, mode: 'insensitive' } } } : {})
       },
@@ -72,7 +73,11 @@ export const getMarketItems = async (req: Request, res: Response) => {
     }
 
     const products = await prisma.product.findMany({
-      where: { marketId: id as string, isActive: true },
+      where: {
+        marketId: id as string,
+        isActive: true,
+        approvalStatus: 'APPROVED'
+      },
       include: {
         priceEntries: { where: { isCurrent: true }, take: 1 },
         vendor: { select: { id: true, businessName: true, stallReference: true } },

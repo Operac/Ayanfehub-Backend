@@ -177,3 +177,114 @@ export const getVendorStats = async (req: Request, res: Response) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+// ─── PRODUCT PRICE UPDATE ─────────────────────────────────────────────────────
+
+/**
+ * Vendor updates the price of their own product (creates new PriceEntry)
+ */
+export const updateProductPrice = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const productId = String(req.params['productId']);
+    const { priceNgn } = z.object({ priceNgn: z.number().positive() }).parse(req.body);
+
+    const vendor = await getVendorForUser(userId);
+    if (!vendor) return res.status(404).json({ message: 'No vendor profile linked' });
+
+    const product = await prisma.product.findFirst({ where: { id: productId, vendorId: vendor.id } });
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    // Mark old price as not current
+    await prisma.priceEntry.updateMany({
+      where: { productId, isCurrent: true },
+      data: { isCurrent: false }
+    });
+
+    // Create new current price entry
+    const newEntry = await prisma.priceEntry.create({
+      data: {
+        productId,
+        vendorId: vendor.id,
+        priceNgn,
+        isCurrent: true,
+        recordedBy: userId
+      }
+    });
+
+    res.json({ message: 'Price updated', priceEntry: newEntry });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('updateProductPrice failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// ─── PRODUCT UPLOAD (APPROVAL WORKFLOW) ───────────────────────────────────────
+
+/**
+ * Vendor uploads a product for admin approval
+ * Product starts in PENDING_APPROVAL status and won't be visible to customers
+ */
+export const uploadProduct = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const schema = z.object({
+      name: z.string().min(2),
+      description: z.string().optional(),
+      unit: z.string().min(1),
+      categoryId: z.string().uuid().optional(),
+      priceNgn: z.number().positive(),
+      stockQuantity: z.number().int().positive().optional(),
+      imageUrls: z.array(z.string()).optional()
+    });
+
+    const data = schema.parse(req.body);
+
+    const vendor = await getVendorForUser(userId);
+    if (!vendor) return res.status(404).json({ message: 'No vendor profile linked to this account' });
+
+    // Create product with PENDING_APPROVAL status
+    const product = await prisma.product.create({
+      data: {
+        vendorId: vendor.id,
+        marketId: vendor.marketId,
+        name: data.name,
+        description: data.description,
+        unit: data.unit,
+        categoryId: data.categoryId,
+        imageUrls: data.imageUrls || [],
+        stockQuantity: data.stockQuantity,
+        approvalStatus: 'PENDING_APPROVAL', // Start in pending status
+        isActive: true
+      },
+      include: {
+        vendor: { select: { businessName: true } },
+        category: { select: { name: true } }
+      }
+    });
+
+    // Create current price entry
+    await prisma.priceEntry.create({
+      data: {
+        productId: product.id,
+        vendorId: vendor.id,
+        priceNgn: data.priceNgn,
+        isCurrent: true,
+        recordedBy: userId
+      }
+    });
+
+    res.json({
+      message: 'Product submitted for approval. It will be reviewed by our admin team within 24 hours.',
+      product: {
+        ...product,
+        currentPrice: data.priceNgn
+      }
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('uploadProduct failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};

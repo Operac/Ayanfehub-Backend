@@ -145,6 +145,7 @@ model Vendor {
   bankCode             String?            @map("bank_code")
   ratingAverage        Decimal?           @map("rating_average") @db.Decimal(3, 2)
   totalOrdersFulfilled Int                @default(0) @map("total_orders_fulfilled")
+  createdByAdmin       Boolean            @default(false) @map("created_by_admin")
   createdAt            DateTime           @default(now()) @map("created_at")
   updatedAt            DateTime           @updatedAt @map("updated_at")
 
@@ -185,20 +186,24 @@ model Category {
 // ─── PRODUCTS ─────────────────────────────────────────────────────────────────
 
 model Product {
-  id               String   @id @default(uuid())
-  vendorId         String   @map("vendor_id")
-  marketId         String   @map("market_id")
-  categoryId       String?  @map("category_id")
+  id               String                 @id @default(uuid())
+  vendorId         String                 @map("vendor_id")
+  marketId         String                 @map("market_id")
+  categoryId       String?                @map("category_id")
   name             String
   description      String?
   unit             String // "kg", "paint bucket", "bag (50kg)", "dozen"
-  minOrderQuantity Decimal  @default(1) @map("min_order_quantity") @db.Decimal(10, 2)
-  imageUrls        String[] @map("image_urls")
-  isSeasonal       Boolean  @default(false) @map("is_seasonal")
-  isActive         Boolean  @default(true) @map("is_active")
-  stockQuantity    Int?     @map("stock_quantity")      // null = unlimited
-  reservedQuantity Int      @default(0) @map("reserved_quantity")
-  createdAt        DateTime @default(now()) @map("created_at")
+  minOrderQuantity Decimal                @default(1) @map("min_order_quantity") @db.Decimal(10, 2)
+  imageUrls        String[]               @map("image_urls")
+  isSeasonal       Boolean                @default(false) @map("is_seasonal")
+  isActive         Boolean                @default(true) @map("is_active")
+  stockQuantity    Int?                   @map("stock_quantity")      // null = unlimited
+  reservedQuantity Int                    @default(0) @map("reserved_quantity")
+  approvalStatus   ProductApprovalStatus  @default(APPROVED) @map("approval_status")
+  approvedAt       DateTime?              @map("approved_at")
+  approvedBy       String?                @map("approved_by")
+  rejectionReason  String?                @map("rejection_reason")
+  createdAt        DateTime               @default(now()) @map("created_at")
 
   vendor       Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
   category     Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -206,7 +211,17 @@ model Product {
   orderItems   OrderItem[]
 
   @@index([marketId, vendorId, isActive])
+  @@index([approvalStatus, marketId])
+  @@index([approvalStatus, vendorId])
   @@map("products")
+}
+
+enum ProductApprovalStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+
+  @@map("product_approval_status")
 }
 
 // ─── PRICE INTELLIGENCE ───────────────────────────────────────────────────────
@@ -407,6 +422,7 @@ model Artisan {
   isAvailable        Boolean            @default(true) @map("is_available")
   ratingAverage      Decimal?           @map("rating_average") @db.Decimal(3, 2)
   phone              String?
+  createdByAdmin     Boolean            @default(false) @map("created_by_admin")
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 
@@ -443,6 +459,7 @@ model Apartment {
   isAvailable  Boolean  @default(true) @map("is_available")
   isVerified   Boolean  @default(false) @map("is_verified")
   amenities    String[]
+  createdByAdmin Boolean @default(false) @map("created_by_admin")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
