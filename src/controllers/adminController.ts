@@ -405,8 +405,10 @@ export const createArtisan = async (req: Request, res: Response) => {
  */
 export const createAdminProduct = async (req: Request, res: Response) => {
   try {
+    const vendorId = req.params.vendorId as string;
+    if (!vendorId) return res.status(400).json({ message: 'vendorId param required' });
+
     const schema = z.object({
-      vendorId: z.string().uuid(),
       name: z.string().min(2),
       description: z.string().optional(),
       unit: z.string().min(1),
@@ -420,14 +422,14 @@ export const createAdminProduct = async (req: Request, res: Response) => {
     const data = schema.parse(req.body);
 
     const vendor = await prisma.vendor.findUnique({
-      where: { id: data.vendorId },
+      where: { id: vendorId },
       select: { marketId: true }
     });
     if (!vendor) return res.status(404).json({ message: 'Vendor not found' });
 
     const product = await prisma.product.create({
       data: {
-        vendorId: data.vendorId,
+        vendorId: vendorId,
         marketId: vendor.marketId,
         name: data.name,
         description: data.description,
@@ -449,7 +451,7 @@ export const createAdminProduct = async (req: Request, res: Response) => {
     await prisma.priceEntry.create({
       data: {
         productId: product.id,
-        vendorId: data.vendorId,
+        vendorId: vendorId,
         priceNgn: data.priceNgn,
         isCurrent: true,
         recordedBy: (req as any).user?.id
@@ -472,8 +474,10 @@ export const createAdminProduct = async (req: Request, res: Response) => {
  */
 export const createArtisanService = async (req: Request, res: Response) => {
   try {
+    const artisanId = req.params.artisanId as string;
+    if (!artisanId) return res.status(400).json({ message: 'artisanId param required' });
+
     const schema = z.object({
-      artisanId: z.string().uuid(),
       serviceName: z.string().min(2),
       priceNgn: z.number().positive(),
       description: z.string().optional(),
@@ -482,12 +486,12 @@ export const createArtisanService = async (req: Request, res: Response) => {
 
     const data = schema.parse(req.body);
 
-    const artisan = await prisma.artisan.findUnique({ where: { id: data.artisanId } });
+    const artisan = await prisma.artisan.findUnique({ where: { id: artisanId } });
     if (!artisan) return res.status(404).json({ message: 'Artisan not found' });
 
     const service = await prisma.artisanService.create({
       data: {
-        artisanId: data.artisanId,
+        artisanId: artisanId,
         serviceName: data.serviceName,
         priceNgn: data.priceNgn,
         description: data.description,
