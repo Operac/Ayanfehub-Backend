@@ -96,7 +96,18 @@ export const getMyVendorOrders = async (req: Request, res: Response) => {
       take: 50
     });
 
-    res.json(orderItems);
+    // Map Prisma field names → frontend-expected aliases
+    const mapped = orderItems.map(item => ({
+      id:            item.id,
+      quantity:      item.quantity,
+      unitPriceNgn:  item.priceNgnAtOrder,   // alias
+      totalPriceNgn: item.subtotalNgn,        // alias
+      sourcingStatus: item.sourcingStatus,
+      product:       item.product,
+      order:         item.order,
+    }));
+
+    res.json(mapped);
   } catch (error) {
     logger.error('getMyVendorOrders failed', { error });
     res.status(500).json({ message: 'Server error' });

@@ -1,5 +1,7 @@
 declare module 'flutterwave-node-v3' {
-  export default class Flutterwave {
+  class Flutterwave {
     constructor(publicKey: string, secretKey: string);
+    [key: string]: any;
   }
+  export = Flutterwave;
 }

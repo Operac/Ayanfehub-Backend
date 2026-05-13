@@ -70,9 +70,18 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
   try {
     const { orderId, status } = updateStatusSchema.parse(req.body);
 
-    const order = await prisma.order.update({
-      where: { id: orderId },
-      data: { status: status as OrderStatus }
+    const order = await prisma.$transaction(async (tx) => {
+      // If cancelling, release reserved stock
+      if (status === 'CANCELLED') {
+        const items = await tx.orderItem.findMany({ where: { orderId } });
+        for (const item of items) {
+          await tx.product.updateMany({
+            where: { id: item.productId, stockQuantity: { not: null } },
+            data: { reservedQuantity: { decrement: Number(item.quantity) } }
+          });
+        }
+      }
+      return tx.order.update({ where: { id: orderId }, data: { status: status as OrderStatus } });
     });
 
     emitOrderUpdate(orderId, status);

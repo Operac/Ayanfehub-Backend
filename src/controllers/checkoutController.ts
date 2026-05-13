@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../config/db';
 import { z } from 'zod';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
 import Flutterwave from 'flutterwave-node-v3';
 import { io } from '../server';
 import logger from '../utils/logger';
@@ -22,7 +24,8 @@ const initiatePaymentSchema = z.object({
     quantity: z.number().positive()
   })),
   deliveryAddressId: z.string().uuid(),
-  deliveryZoneId: z.string().uuid()
+  deliveryZoneId: z.string().uuid(),
+  promoCode: z.string().optional()
 });
 
 const flutterwave = new Flutterwave(process.env.FLUTTERWAVE_PUBLIC_KEY || '', process.env.FLUTTERWAVE_SECRET_KEY || '');
@@ -107,7 +110,7 @@ export const calculateDelivery = async (req: Request, res: Response) => {
 
 export const initiatePayment = async (req: Request, res: Response) => {
   try {
-    const { items, deliveryAddressId, deliveryZoneId } = initiatePaymentSchema.parse(req.body);
+    const { items, deliveryAddressId, deliveryZoneId, promoCode } = initiatePaymentSchema.parse(req.body);
     const userId = (req as any).user.id;
 
     if (items.length === 0) {
@@ -119,23 +122,29 @@ export const initiatePayment = async (req: Request, res: Response) => {
       include: { priceEntries: { where: { isCurrent: true }, take: 1 } }
     });
 
-    const deliveryZone = await prisma.deliveryZone.findUnique({ where: { id: deliveryZoneId } });
-    if (!deliveryZone) {
-      return res.status(404).json({ message: 'Delivery zone not found' });
-    }
-
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    const [deliveryZone, user] = await Promise.all([
+      prisma.deliveryZone.findUnique({ where: { id: deliveryZoneId } }),
+      prisma.user.findUnique({ where: { id: userId } })
+    ]);
+    if (!deliveryZone) return res.status(404).json({ message: 'Delivery zone not found' });
+    if (!user) return res.status(404).json({ message: 'User not found' });
 
     let subtotal = 0;
     const orderItems: any[] = [];
 
     for (const cartItem of items) {
       const product = products.find(p => p.id === cartItem.id);
-      if (!product) {
-        return res.status(404).json({ message: `Product ${cartItem.id} not found` });
+      if (!product) return res.status(404).json({ message: `Product ${cartItem.id} not found` });
+
+      // Stock check (null stockQuantity = unlimited)
+      if (product.stockQuantity !== null) {
+        const available = product.stockQuantity - product.reservedQuantity;
+        if (cartItem.quantity > available) {
+          return res.status(400).json({
+            message: `Only ${available} units of "${product.name}" available`,
+            productId: product.id
+          });
+        }
       }
 
       const price = product.priceEntries[0]?.priceNgn ? Number(product.priceEntries[0].priceNgn) : 0;
@@ -154,25 +163,60 @@ export const initiatePayment = async (req: Request, res: Response) => {
       });
     }
 
-    const serviceFeeAmount = Math.round(subtotal * 0.05); // 5% service fee
-    const deliveryFeeAmount = Number(deliveryZone.deliveryFeeNgn);
-    const totalAmount = subtotal + deliveryFeeAmount + serviceFeeAmount;
+    // Validate and apply promo code
+    let discountNgn = 0;
+    let validatedPromoCode: string | undefined;
+    if (promoCode) {
+      const now = new Date();
+      const promo = await prisma.promotion.findFirst({
+        where: { code: promoCode.toUpperCase(), isActive: true, validFrom: { lte: now }, validTo: { gte: now } }
+      });
+      if (promo && !(promo.maxUsesTotal && promo.usedCount >= promo.maxUsesTotal)) {
+        if (!promo.minOrderNgn || subtotal >= Number(promo.minOrderNgn)) {
+          discountNgn = promo.discountType === 'PERCENTAGE'
+            ? Math.round(subtotal * Number(promo.discountValue) / 100)
+            : Math.min(Number(promo.discountValue), subtotal);
+          validatedPromoCode = promo.code;
+          // Increment usage count
+          await prisma.promotion.update({ where: { id: promo.id }, data: { usedCount: { increment: 1 } } });
+        }
+      }
+    }
 
-    const orderNumber = `AYF-${Date.now()}`;
-    const order = await prisma.order.create({
-      data: {
-        orderNumber,
-        userId,
-        status: 'PENDING_PAYMENT',
-        deliveryAddressId,
-        deliveryZoneId,
-        subtotalNgn: subtotal,
-        deliveryFeeNgn: deliveryFeeAmount,
-        serviceFeeNgn: serviceFeeAmount,
-        totalNgn: totalAmount,
-        items: { create: orderItems }
-      },
-      include: { items: true }
+    const serviceFeeAmount = Math.round(subtotal * 0.05);
+    const deliveryFeeAmount = Number(deliveryZone.deliveryFeeNgn);
+    const totalAmount = subtotal + deliveryFeeAmount + serviceFeeAmount - discountNgn;
+
+    // Reserve stock and create order in a transaction
+    const order = await prisma.$transaction(async (tx) => {
+      // Reserve stock for limited products
+      for (const cartItem of items) {
+        const product = products.find(p => p.id === cartItem.id);
+        if (product && product.stockQuantity !== null) {
+          await tx.product.update({
+            where: { id: product.id },
+            data: { reservedQuantity: { increment: cartItem.quantity } }
+          });
+        }
+      }
+
+      return tx.order.create({
+        data: {
+          orderNumber: `AYF-${Date.now()}`,
+          userId,
+          status: 'PENDING_PAYMENT',
+          deliveryAddressId,
+          deliveryZoneId,
+          subtotalNgn: subtotal,
+          deliveryFeeNgn: deliveryFeeAmount,
+          serviceFeeNgn: serviceFeeAmount,
+          discountNgn,
+          promoCode: validatedPromoCode,
+          totalNgn: Math.max(0, totalAmount),
+          items: { create: orderItems }
+        },
+        include: { items: true }
+      });
     });
 
     const paymentReference = `FLW-${order.id.slice(0, 8).toUpperCase()}-${Date.now()}`;
@@ -203,7 +247,10 @@ export const initiatePayment = async (req: Request, res: Response) => {
       order: {
         id: order.id,
         orderNumber: order.orderNumber,
-        total: totalAmount
+        subtotal,
+        discountNgn,
+        promoCode: validatedPromoCode,
+        total: Number(order.totalNgn)
       },
       paymentReference,
       flutterwavePayload

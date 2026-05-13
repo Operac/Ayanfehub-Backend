@@ -196,6 +196,8 @@ model Product {
   imageUrls        String[] @map("image_urls")
   isSeasonal       Boolean  @default(false) @map("is_seasonal")
   isActive         Boolean  @default(true) @map("is_active")
+  stockQuantity    Int?     @map("stock_quantity")      // null = unlimited
+  reservedQuantity Int      @default(0) @map("reserved_quantity")
   createdAt        DateTime @default(now()) @map("created_at")
 
   vendor       Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
@@ -279,6 +281,8 @@ model Order {
   subtotalNgn           Decimal     @map("subtotal_ngn") @db.Decimal(10, 2)
   deliveryFeeNgn        Decimal     @map("delivery_fee_ngn") @db.Decimal(10, 2)
   serviceFeeNgn         Decimal     @map("service_fee_ngn") @db.Decimal(10, 2)
+  discountNgn           Decimal     @default(0) @map("discount_ngn") @db.Decimal(10, 2)
+  promoCode             String?     @map("promo_code")
   totalNgn              Decimal     @map("total_ngn") @db.Decimal(10, 2)
   currencyPaid          Currency    @default(NGN) @map("currency_paid")
   fxRate                Decimal?    @map("fx_rate") @db.Decimal(10, 4)
@@ -443,6 +447,33 @@ model Apartment {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   @@map("apartments")
+}
+
+// ─── PROMOTIONS ───────────────────────────────────────────────────────────────
+
+model Promotion {
+  id            String       @id @default(uuid())
+  code          String       @unique
+  description   String?
+  discountType  DiscountType @map("discount_type")
+  discountValue Decimal      @map("discount_value") @db.Decimal(10, 2)
+  minOrderNgn   Decimal?     @map("min_order_ngn") @db.Decimal(10, 2)
+  maxUsesTotal  Int?         @map("max_uses_total")
+  usedCount     Int          @default(0) @map("used_count")
+  validFrom     DateTime     @map("valid_from")
+  validTo       DateTime     @map("valid_to")
+  isActive      Boolean      @default(true) @map("is_active")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  @@index([code, isActive])
+  @@map("promotions")
+}
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+
+  @@map("discount_type")
 }
 
 // ─── PAYMENTS ─────────────────────────────────────────────────────────────────
