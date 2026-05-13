@@ -22,10 +22,22 @@ dotenv.config();
 const app: Application = express();
 const httpServer = createServer(app);
 
-const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
+// Support multiple origins as a comma-separated list in FRONTEND_URL
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map(o => o.trim());
+
+const corsOptions = {
+  origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+    // Allow server-to-server requests (no origin) and listed origins
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    cb(new Error(`CORS: origin ${origin} not allowed`));
+  },
+  credentials: true,
+};
 
 export const io = new SocketIO(httpServer, {
-  cors: { origin: allowedOrigin, credentials: true }
+  cors: { origin: allowedOrigins, credentials: true }
 });
 
 io.on('connection', socket => {
@@ -44,7 +56,7 @@ io.on('connection', socket => {
 
 // Security Middleware
 app.use(helmet());
-app.use(cors({ origin: allowedOrigin, credentials: true }));
+app.use(cors(corsOptions));
 app.use(cookieParser());
 app.use(express.json());
 
