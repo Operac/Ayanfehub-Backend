@@ -39,6 +39,20 @@ export const searchMarkets = async (req: Request, res: Response) => {
   }
 };
 
+export const getCategories = async (_req: Request, res: Response) => {
+  try {
+    const categories = await prisma.category.findMany({
+      where: { parentId: null },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, slug: true }
+    });
+    res.json(categories);
+  } catch (error) {
+    logger.error('getCategories failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
 export const getMarkets = async (req: Request, res: Response) => {
   try {
     const markets = await prisma.market.findMany({
