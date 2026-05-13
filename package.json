@@ -1,13 +1,14 @@
 {
   "name": "ayanfe-backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon src/server.ts",
+    "build": "npx prisma generate && tsc",
+    "start": "node dist/server.js",
     "seed": "ts-node prisma/seed.ts",
     "seed-markets": "ts-node prisma/seed.ts",
-    "create-admin": "ts-node src/scripts/createAdmin.ts",
-    "build": "tsc"
+    "create-admin": "ts-node src/scripts/createAdmin.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
