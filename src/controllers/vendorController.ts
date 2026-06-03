@@ -7,7 +7,8 @@ const updateProductSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   unit: z.string().optional(),
-  isActive: z.boolean().optional()
+  isActive: z.boolean().optional(),
+  stockQuantity: z.number().int().nonnegative().nullable().optional(),
 });
 
 async function getVendorForUser(userId: string) {
@@ -81,20 +82,28 @@ export const getMyVendorOrders = async (req: Request, res: Response) => {
     const vendor = await getVendorForUser(userId);
     if (!vendor) return res.status(404).json({ message: 'No vendor profile linked' });
 
-    const orderItems = await prisma.orderItem.findMany({
-      where: { vendorId: vendor.id },
-      include: {
-        order: {
-          select: {
-            id: true, orderNumber: true, status: true, createdAt: true, totalNgn: true,
-            user: { select: { fullName: true, phone: true } }
-          }
+    const page  = Math.max(1, parseInt(String(req.query.page  ?? 1)));
+    const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? 20))));
+    const skip  = (page - 1) * limit;
+
+    const [total, orderItems] = await Promise.all([
+      prisma.orderItem.count({ where: { vendorId: vendor.id } }),
+      prisma.orderItem.findMany({
+        where: { vendorId: vendor.id },
+        include: {
+          order: {
+            select: {
+              id: true, orderNumber: true, status: true, createdAt: true, totalNgn: true,
+              user: { select: { fullName: true, phone: true } }
+            }
+          },
+          product: { select: { name: true, unit: true } }
         },
-        product: { select: { name: true, unit: true } }
-      },
-      orderBy: { order: { createdAt: 'desc' } },
-      take: 50
-    });
+        orderBy: { order: { createdAt: 'desc' } },
+        skip,
+        take: limit
+      })
+    ]);
 
     // Map Prisma field names → frontend-expected aliases
     const mapped = orderItems.map(item => ({
@@ -107,7 +116,7 @@ export const getMyVendorOrders = async (req: Request, res: Response) => {
       order:         item.order,
     }));
 
-    res.json(mapped);
+    res.json({ data: mapped, total, page, limit, pages: Math.ceil(total / limit) });
   } catch (error) {
     logger.error('getMyVendorOrders failed', { error });
     res.status(500).json({ message: 'Server error' });
@@ -195,21 +204,22 @@ export const updateProductPrice = async (req: Request, res: Response) => {
     const product = await prisma.product.findFirst({ where: { id: productId, vendorId: vendor.id } });
     if (!product) return res.status(404).json({ message: 'Product not found' });
 
-    // Mark old price as not current
-    await prisma.priceEntry.updateMany({
-      where: { productId, isCurrent: true },
-      data: { isCurrent: false }
-    });
-
-    // Create new current price entry
-    const newEntry = await prisma.priceEntry.create({
-      data: {
-        productId,
-        vendorId: vendor.id,
-        priceNgn,
-        isCurrent: true,
-        recordedBy: userId
-      }
+    // Wrap both steps in a transaction to prevent a partial-update state
+    // where no current price exists if the process crashes between the two writes.
+    const newEntry = await prisma.$transaction(async (tx) => {
+      await tx.priceEntry.updateMany({
+        where: { productId, isCurrent: true },
+        data: { isCurrent: false }
+      });
+      return tx.priceEntry.create({
+        data: {
+          productId,
+          vendorId: vendor.id,
+          priceNgn,
+          isCurrent: true,
+          recordedBy: userId
+        }
+      });
     });
 
     res.json({ message: 'Price updated', priceEntry: newEntry });
@@ -285,6 +295,36 @@ export const uploadProduct = async (req: Request, res: Response) => {
   } catch (error) {
     if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
     logger.error('uploadProduct failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Vendor resubmits a rejected product for re-approval.
+ * Resets approvalStatus → PENDING_APPROVAL and clears rejectionReason.
+ */
+export const resubmitProduct = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const productId = String(req.params['productId']);
+
+    const vendor = await getVendorForUser(userId);
+    if (!vendor) return res.status(404).json({ message: 'No vendor profile linked' });
+
+    const product = await prisma.product.findFirst({ where: { id: productId, vendorId: vendor.id } });
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    if (product.approvalStatus !== 'REJECTED') {
+      return res.status(400).json({ message: 'Only rejected products can be resubmitted' });
+    }
+
+    const updated = await prisma.product.update({
+      where: { id: productId },
+      data: { approvalStatus: 'PENDING_APPROVAL', rejectionReason: null }
+    });
+
+    res.json({ message: 'Product resubmitted for approval', product: updated });
+  } catch (error) {
+    logger.error('resubmitProduct failed', { error });
     res.status(500).json({ message: 'Server error' });
   }
 };

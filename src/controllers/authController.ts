@@ -9,7 +9,6 @@ const registerSchema = z.object({
   email: z.string().email().optional(),
   password: z.string().min(6),
   fullName: z.string().optional(),
-  role: z.enum(['ADMIN', 'CUSTOMER']).optional(),
 });
 
 const loginSchema = z.object({
@@ -22,7 +21,7 @@ const loginSchema = z.object({
 
 export const register = async (req: Request, res: Response) => {
   try {
-    const { phone, email, password, fullName, role } = registerSchema.parse(req.body);
+    const { phone, email, password, fullName } = registerSchema.parse(req.body);
 
     const existing = await prisma.user.findFirst({
       where: { OR: [{ phone }, ...(email ? [{ email }] : [])] }
@@ -39,7 +38,7 @@ export const register = async (req: Request, res: Response) => {
         email,
         passwordHash: hashedPassword,
         fullName,
-        role: role === 'ADMIN' ? 'ADMIN' : 'CUSTOMER'
+        role: 'CUSTOMER'
       },
       select: { id: true, email: true, phone: true, role: true }
     });
@@ -49,10 +48,11 @@ export const register = async (req: Request, res: Response) => {
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
       maxAge: 24 * 60 * 60 * 1000
     });
 
-    res.status(201).json({ user: newUser, token });
+    res.status(201).json({ user: newUser });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ errors: error.issues });
@@ -84,10 +84,11 @@ export const login = async (req: Request, res: Response) => {
     res.cookie('token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
       maxAge: 24 * 60 * 60 * 1000
     });
 
-    res.json({ user: { id: user.id, email: user.email, phone: user.phone, role: user.role }, token });
+    res.json({ user: { id: user.id, email: user.email, phone: user.phone, role: user.role } });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ errors: error.issues });
@@ -97,13 +98,28 @@ export const login = async (req: Request, res: Response) => {
   }
 };
 
-export const logout = (req: Request, res: Response) => {
-  res.clearCookie('token');
+export const logout = (_req: Request, res: Response) => {
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  });
   res.json({ message: 'Logged out' });
 };
 
 export const getSession = async (req: Request, res: Response) => {
-  res.json({ message: 'Session valid', user: (req as any).user });
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, phone: true, role: true, fullName: true, avatarUrl: true }
+    });
+    if (!user) return res.status(401).json({ message: 'User not found' });
+    res.json({ user });
+  } catch {
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 const updateProfileSchema = z.object({
@@ -168,8 +184,8 @@ export const updateProfile = async (req: Request, res: Response) => {
     const user = await prisma.user.update({
       where: { id: userId },
       data: {
-        ...(fullName && { fullName }),
-        ...(preferredCurrency && { preferredCurrency }),
+        ...(fullName !== undefined && { fullName }),    // allow clearing to ""
+        ...(preferredCurrency !== undefined && { preferredCurrency }),
         ...(whatsappOptedIn !== undefined && { whatsappOptedIn })
       },
       select: { id: true, email: true, phone: true, fullName: true, role: true, preferredCurrency: true }

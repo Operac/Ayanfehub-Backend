@@ -43,3 +43,9 @@ export const apartmentImageUpload = multer({
   fileFilter,
   limits: { fileSize: 8 * 1024 * 1024 },
 });
+
+export const cleaningPhotoUpload = multer({
+  storage: makeStorage('cleaning', ['jpg', 'jpeg', 'png', 'webp']),
+  fileFilter,
+  limits: { fileSize: 8 * 1024 * 1024 },
+});

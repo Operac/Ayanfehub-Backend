@@ -362,9 +362,34 @@ async function main() {
   }
   console.log('✅ Promo codes created')
 
+  // ── HOME Cleaning Pricing Config ────────────────────────────────────────────
+  const homePricing = {
+    propertyTypes: [
+      { key: 'self-contained', label: 'Self-Contained / Studio',   baseClean: 15000, deepClean: 25000, moveInOut: 30000 },
+      { key: '1-bed',          label: '1-Bedroom Flat',             baseClean: 20000, deepClean: 35000, moveInOut: 40000 },
+      { key: '2-bed',          label: '2-Bedroom Flat',             baseClean: 28000, deepClean: 45000, moveInOut: 52000 },
+      { key: '3-bed',          label: '3-Bedroom Flat',             baseClean: 38000, deepClean: 58000, moveInOut: 65000 },
+      { key: 'duplex',         label: 'Duplex / Maisonette',        baseClean: 55000, deepClean: 85000, moveInOut: 95000 },
+      { key: 'shortlet',       label: 'Shortlet / Serviced Apt',    baseClean: 18000, deepClean: 30000, moveInOut: 35000 },
+    ],
+    addOns: [
+      { key: 'laundry',       label: 'Laundry & Ironing',           price: 8000  },
+      { key: 'carpet',        label: 'Carpet / Rug Cleaning',       price: 12000 },
+      { key: 'windows',       label: 'Window Washing (interior)',    price: 5000  },
+      { key: 'kitchen-deep',  label: 'Deep Kitchen Degreasing',     price: 7000  },
+      { key: 'post-party',    label: 'Post-Party Clean-up',         price: 10000 },
+    ],
+  }
+  await prisma.appSetting.upsert({
+    where:  { key: 'cleaning_home_pricing' },
+    update: { value: JSON.stringify(homePricing) },
+    create: { key: 'cleaning_home_pricing', value: JSON.stringify(homePricing) },
+  })
+  console.log('✅ HOME cleaning pricing config seeded')
+
   console.log('\n🎉 Seed complete!')
   console.log('   Markets: 7 (2 active) · Vendors: 2 · Products: 13')
-  console.log('   Artisans: 6 · Shortlets: 5 · Promos: 3')
+  console.log('   Artisans: 6 · Shortlets: 5 · Promos: 3 · Cleaning pricing: configured')
 }
 
 main()

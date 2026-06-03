@@ -3,10 +3,25 @@ import prisma from '../config/db';
 import { z } from 'zod';
 import logger from '../utils/logger';
 
+const dateQuerySchema = z.object({
+  from: z.string().datetime({ offset: true }).optional(),
+  to:   z.string().datetime({ offset: true }).optional(),
+});
+
+function parseDateRange(query: Record<string, unknown>) {
+  const parsed = dateQuerySchema.parse(query);
+  const from = parsed.from ? new Date(parsed.from) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const to   = parsed.to   ? new Date(parsed.to)   : new Date();
+  if (isNaN(from.getTime()) || isNaN(to.getTime())) throw new Error('Invalid date range');
+  if (from > to) throw new Error('from must be before to');
+  return { from, to };
+}
+
 export const getAdminReports = async (req: Request, res: Response) => {
   try {
-    const from = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const to   = req.query.to   ? new Date(String(req.query.to))   : new Date();
+    let from: Date, to: Date;
+    try { ({ from, to } = parseDateRange(req.query)); }
+    catch (e: any) { return res.status(400).json({ message: e.message }); }
 
     const [totalOrders, revenueAgg, topVendors, statusBreakdown, recentOrders] = await Promise.all([
       prisma.order.count({ where: { createdAt: { gte: from, lte: to } } }),
@@ -161,8 +176,15 @@ export const generateVerificationCode = async (req: Request, res: Response) => {
 
     const order = await prisma.order.findUnique({ where: { id: orderId } });
     if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (order.status !== 'OUT_FOR_DELIVERY') {
+      return res.status(400).json({ message: 'Order must be OUT_FOR_DELIVERY to generate a code' });
+    }
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Persist the code so verifyDelivery can compare it
+    await prisma.order.update({ where: { id: orderId }, data: { verificationCode: code } });
+
     res.json({ message: 'Code generated', code });
   } catch (error) {
     if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
@@ -189,12 +211,19 @@ export const toggleArtisanAvailability = async (req: Request, res: Response) => 
 
 export const exportReportsCSV = async (req: Request, res: Response) => {
   try {
-    const from = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const to   = req.query.to   ? new Date(String(req.query.to))   : new Date();
+    let from: Date, to: Date;
+    try { ({ from, to } = parseDateRange(req.query)); }
+    catch (e: any) { return res.status(400).json({ message: e.message }); }
+    // Cap export window to 90 days to prevent unbounded memory usage
+    const MAX_DAYS = 90 * 24 * 60 * 60 * 1000;
+    if (to.getTime() - from.getTime() > MAX_DAYS) {
+      return res.status(400).json({ message: 'Export range cannot exceed 90 days' });
+    }
 
     const orders = await prisma.order.findMany({
       where: { createdAt: { gte: from, lte: to } },
       orderBy: { createdAt: 'desc' },
+      take: 5000, // prevent unbounded exports
       select: {
         orderNumber: true, status: true, totalNgn: true, subtotalNgn: true,
         deliveryFeeNgn: true, serviceFeeNgn: true, discountNgn: true, promoCode: true,
@@ -236,6 +265,204 @@ export const exportReportsCSV = async (req: Request, res: Response) => {
     res.send(csv);
   } catch (error) {
     logger.error('exportReportsCSV failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// ─── APP SETTINGS ────────────────────────────────────────────────────────────
+
+export const getAppSettings = async (_req: Request, res: Response) => {
+  try {
+    const rows = await prisma.appSetting.findMany();
+    const settings: Record<string, string> = {};
+    rows.forEach(r => { settings[r.key] = r.value; });
+    res.json(settings);
+  } catch (error) {
+    logger.error('getAppSettings failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/** Keys that admins are allowed to set via the general settings panel */
+const ALLOWED_SETTING_KEYS = new Set([
+  'contact_phone',
+  'contact_email',
+  'consolidation_day_of_week',
+  'service_fee_rate',
+  'whatsapp_support_number',
+  'announcement_banner',
+  'maintenance_mode',
+]);
+
+export const updateAppSettings = async (req: Request, res: Response) => {
+  try {
+    const schema = z.record(z.string(), z.string());
+    const updates = schema.parse(req.body);
+
+    const badKeys = Object.keys(updates).filter(k => !ALLOWED_SETTING_KEYS.has(k));
+    if (badKeys.length > 0) {
+      return res.status(400).json({ message: `Unknown or protected setting key(s): ${badKeys.join(', ')}` });
+    }
+
+    await Promise.all(
+      Object.entries(updates).map(([key, value]) =>
+        prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } })
+      )
+    );
+    res.json({ message: 'Settings saved' });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('updateAppSettings failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// ─── DELIVERY ZONES ──────────────────────────────────────────────────────────
+
+export const getAdminDeliveryZones = async (_req: Request, res: Response) => {
+  try {
+    const zones = await prisma.deliveryZone.findMany({
+      orderBy: { name: 'asc' },
+      include: {
+        deliveryRates: {
+          include: { market: { select: { id: true, name: true } } }
+        }
+      }
+    });
+    res.json(zones);
+  } catch (error) {
+    logger.error('getAdminDeliveryZones failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+export const createDeliveryZone = async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(2),
+      cities: z.array(z.string().min(1)),
+      deliveryFeeNgn: z.number().nonnegative(),
+      consolidatedDeliveryFeeNgn: z.number().nonnegative(),
+      isActive: z.boolean().default(true)
+    });
+    const data = schema.parse(req.body);
+    const zone = await prisma.deliveryZone.create({
+      data: {
+        name: data.name,
+        cities: data.cities.map(c => c.toLowerCase().trim()),
+        deliveryFeeNgn: data.deliveryFeeNgn,
+        consolidatedDeliveryFeeNgn: data.consolidatedDeliveryFeeNgn,
+        isActive: data.isActive
+      }
+    });
+    res.status(201).json(zone);
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('createDeliveryZone failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+export const updateDeliveryZone = async (req: Request, res: Response) => {
+  try {
+    const zoneId = req.params.zoneId as string;
+    const schema = z.object({
+      name: z.string().min(2).optional(),
+      cities: z.array(z.string().min(1)).optional(),
+      deliveryFeeNgn: z.number().nonnegative().optional(),
+      consolidatedDeliveryFeeNgn: z.number().nonnegative().optional(),
+      isActive: z.boolean().optional()
+    });
+    const data = schema.parse(req.body);
+    const zone = await prisma.deliveryZone.update({
+      where: { id: zoneId },
+      data: {
+        ...data,
+        cities: data.cities ? data.cities.map(c => c.toLowerCase().trim()) : undefined
+      }
+    });
+    res.json(zone);
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('updateDeliveryZone failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// ─── DELIVERY RATES ──────────────────────────────────────────────────────────
+
+export const getDeliveryRates = async (_req: Request, res: Response) => {
+  try {
+    const rates = await prisma.marketDeliveryRate.findMany({
+      include: {
+        market: { select: { id: true, name: true } },
+        deliveryZone: { select: { id: true, name: true } }
+      }
+    });
+    res.json(rates);
+  } catch (error) {
+    logger.error('getDeliveryRates failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+export const upsertDeliveryRates = async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      rates: z.array(z.object({
+        marketId: z.string().uuid(),
+        deliveryZoneId: z.string().uuid(),
+        priceNgn: z.number().nonnegative()
+      }))
+    });
+    const { rates } = schema.parse(req.body);
+
+    await Promise.all(rates.map(r =>
+      prisma.marketDeliveryRate.upsert({
+        where: { marketId_deliveryZoneId: { marketId: r.marketId, deliveryZoneId: r.deliveryZoneId } },
+        create: { marketId: r.marketId, deliveryZoneId: r.deliveryZoneId, priceNgn: r.priceNgn },
+        update: { priceNgn: r.priceNgn }
+      })
+    ));
+
+    res.json({ message: 'Rates updated', count: rates.length });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('upsertDeliveryRates failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// ─── CREATE MARKET ────────────────────────────────────────────────────────────
+
+export const createMarket = async (req: Request, res: Response) => {
+  try {
+    const schema = z.object({
+      name: z.string().min(2),
+      category: z.string().min(2),
+      imageUrl: z.string().url().optional(),
+      lat: z.number().optional(),
+      lng: z.number().optional(),
+      isActive: z.boolean().default(false)
+    });
+    const data = schema.parse(req.body);
+    const slug = data.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+
+    const market = await prisma.market.create({
+      data: {
+        name: data.name,
+        slug,
+        category: data.category,
+        imageUrl: data.imageUrl,
+        lat: data.lat,
+        lng: data.lng,
+        isActive: data.isActive
+      }
+    });
+    res.status(201).json(market);
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('createMarket failed', { error });
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -313,9 +540,14 @@ export const createVendor = async (req: Request, res: Response) => {
       include: { market: { select: { name: true } } }
     });
 
-    // Notify vendor
+    // Notify vendor via email
     const NotificationService = require('../services/notificationService').default;
-    NotificationService.notifyVendorCreated(userId, data.email, data.password);
+    await NotificationService.notifyVendorCreated(
+      data.email,
+      data.contactName,
+      data.businessName,
+      data.password  // pass plain password so welcome email can show it
+    );
 
     res.json({
       message: 'Vendor created successfully',
@@ -384,7 +616,13 @@ export const createArtisan = async (req: Request, res: Response) => {
     });
 
     const NotificationService = require('../services/notificationService').default;
-    NotificationService.notifyArtisanCreated(userId, data.email, data.password);
+    await NotificationService.notifyArtisanCreated(
+      data.email,
+      data.name,
+      data.name,
+      data.category,
+      data.password
+    );
 
     res.json({
       message: 'Artisan created successfully',
@@ -563,7 +801,12 @@ export const createShortlet = async (req: Request, res: Response) => {
 
     const NotificationService = require('../services/notificationService').default;
     if (userId && data.email) {
-      NotificationService.notifyShortletCreated(userId, data.email, data.name, data.password);
+      await NotificationService.notifyShortletCreated(
+        data.email,
+        data.name || 'Shortlet Manager',
+        data.name,
+        data.password
+      );
     }
 
     res.json({
@@ -585,8 +828,8 @@ export const createShortlet = async (req: Request, res: Response) => {
  */
 export const approveOrRejectProduct = async (req: Request, res: Response) => {
   try {
+    const { productId } = z.object({ productId: z.string().uuid() }).parse(req.params);
     const schema = z.object({
-      productId: z.string().uuid(),
       approvalStatus: z.enum(['APPROVED', 'REJECTED']),
       rejectionReason: z.string().optional()
     });
@@ -594,14 +837,14 @@ export const approveOrRejectProduct = async (req: Request, res: Response) => {
     const data = schema.parse(req.body);
 
     const product = await prisma.product.findUnique({
-      where: { id: data.productId },
-      include: { vendor: { select: { id: true, businessName: true } } }
+      where: { id: productId },
+      include: { vendor: { select: { id: true, userId: true, businessName: true } } }
     });
 
     if (!product) return res.status(404).json({ message: 'Product not found' });
 
     const updated = await prisma.product.update({
-      where: { id: data.productId },
+      where: { id: productId },
       data: {
         approvalStatus: data.approvalStatus as any,
         approvedAt: new Date(),
@@ -614,12 +857,20 @@ export const approveOrRejectProduct = async (req: Request, res: Response) => {
       }
     });
 
-    // Notify vendor
+    // Notify vendor via email — look up user from vendor.userId
     const NotificationService = require('../services/notificationService').default;
+    let vendorEmail: string | null = null;
+    if (product.vendor?.userId) {
+      const vendorUser = await prisma.user.findUnique({
+        where: { id: product.vendor.userId },
+        select: { email: true }
+      });
+      vendorEmail = vendorUser?.email ?? null;
+    }
     if (data.approvalStatus === 'APPROVED') {
-      NotificationService.notifyProductApproved(product.vendor.id, product.name);
+      await NotificationService.notifyProductApproved(vendorEmail, product.name);
     } else {
-      NotificationService.notifyProductRejected(product.vendor.id, product.name, data.rejectionReason || 'No reason provided');
+      await NotificationService.notifyProductRejected(vendorEmail, product.name, data.rejectionReason || 'No reason provided');
     }
 
     res.json({
@@ -676,6 +927,72 @@ export const getPendingProducts = async (req: Request, res: Response) => {
     });
   } catch (error) {
     logger.error('getPendingProducts failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Admin: list all markets with their run days
+ */
+export const getAdminMarkets = async (_req: Request, res: Response) => {
+  try {
+    const markets = await prisma.market.findMany({
+      orderBy: { name: 'asc' },
+      include: { runDays: { orderBy: { dayOfWeek: 'asc' } } }
+    });
+    res.json(markets);
+  } catch (error) {
+    logger.error('getAdminMarkets failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * Admin: replace all run days for a market (handles cutoff time + delivery days)
+ */
+export const updateMarketRunDays = async (req: Request, res: Response) => {
+  try {
+    const marketId = req.params.marketId as string;
+
+    const runDaySchema = z.object({
+      dayOfWeek: z.number().int().min(0).max(6),
+      cutoffHour: z.number().int().min(0).max(23),
+      cutoffMinute: z.number().int().min(0).max(59).default(0),
+      isMasterConsolidation: z.boolean().default(false)
+    });
+
+    const schema = z.object({
+      runDays: z.array(runDaySchema)
+    });
+
+    const { runDays } = schema.parse(req.body);
+
+    const market = await prisma.market.findUnique({ where: { id: marketId } });
+    if (!market) return res.status(404).json({ message: 'Market not found' });
+
+    // Replace run days atomically
+    await prisma.$transaction([
+      prisma.runDay.deleteMany({ where: { marketId } }),
+      prisma.runDay.createMany({
+        data: runDays.map(d => ({
+          marketId,
+          dayOfWeek: d.dayOfWeek,
+          cutoffHour: d.cutoffHour,
+          cutoffMinute: d.cutoffMinute,
+          isMasterConsolidation: d.isMasterConsolidation
+        }))
+      })
+    ]);
+
+    const updated = await prisma.market.findUnique({
+      where: { id: marketId },
+      include: { runDays: { orderBy: { dayOfWeek: 'asc' } } }
+    });
+
+    res.json({ message: 'Run days updated', market: updated });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('updateMarketRunDays failed', { error });
     res.status(500).json({ message: 'Server error' });
   }
 };

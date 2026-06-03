@@ -29,6 +29,12 @@ model User {
   orders           Order[]
   whatsappMessages WhatsappMessage[]
   reviews          Review[]
+  notifications    Notification[]
+  groupBuyEventsCreated GroupBuyEvent[]    @relation("GroupBuyCreator")
+  groupBuySlots         GroupBuySlot[]     @relation("GroupBuyCustomer")
+  groupBuyWaitlist      GroupBuyWaitlist[] @relation("GroupBuyWaitlistCustomer")
+  disputes         Dispute[]
+  cleaningRequests CleaningRequest[]
 
   @@map("users")
 }
@@ -75,9 +81,10 @@ model Market {
   lng       Decimal? @db.Decimal(11, 8)
   createdAt DateTime @default(now()) @map("created_at")
 
-  vendors Vendor[]
-  runDays RunDay[]
-  agents  MarketAgent[]
+  vendors       Vendor[]
+  runDays       RunDay[]
+  agents        MarketAgent[]
+  deliveryRates MarketDeliveryRate[]
 
   @@map("markets")
 }
@@ -87,6 +94,7 @@ model RunDay {
   marketId              String  @map("market_id")
   dayOfWeek             Int     @map("day_of_week") // 0=Sun 6=Sat
   cutoffHour            Int     @default(20) @map("cutoff_hour")
+  cutoffMinute          Int     @default(0)  @map("cutoff_minute")
   isMasterConsolidation Boolean @default(false) @map("is_master_consolidation")
 
   market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
@@ -97,16 +105,40 @@ model RunDay {
 // ─── DELIVERY ─────────────────────────────────────────────────────────────────
 
 model DeliveryZone {
-  id                         String  @id @default(uuid())
+  id                         String   @id @default(uuid())
   name                       String
-  isActive                   Boolean @default(true) @map("is_active")
-  deliveryFeeNgn             Decimal @map("delivery_fee_ngn") @db.Decimal(10, 2)
-  consolidatedDeliveryFeeNgn Decimal @map("consolidated_delivery_fee_ngn") @db.Decimal(10, 2)
+  cities                     String[] // city names that auto-match this zone (lowercase)
+  isActive                   Boolean  @default(true) @map("is_active")
+  deliveryFeeNgn             Decimal  @map("delivery_fee_ngn") @db.Decimal(10, 2)
+  consolidatedDeliveryFeeNgn Decimal  @map("consolidated_delivery_fee_ngn") @db.Decimal(10, 2)
 
-  addresses DeliveryAddress[]
-  orders    Order[]
+  addresses     DeliveryAddress[]
+  orders        Order[]
+  deliveryRates MarketDeliveryRate[]
 
   @@map("delivery_zones")
+}
+
+model MarketDeliveryRate {
+  id             String   @id @default(uuid())
+  marketId       String   @map("market_id")
+  deliveryZoneId String   @map("delivery_zone_id")
+  priceNgn       Decimal  @db.Decimal(12, 2) @map("price_ngn")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  market       Market       @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  deliveryZone DeliveryZone @relation(fields: [deliveryZoneId], references: [id], onDelete: Cascade)
+
+  @@unique([marketId, deliveryZoneId])
+  @@map("market_delivery_rates")
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_settings")
 }
 
 model DeliveryAddress {
@@ -154,6 +186,7 @@ model Vendor {
   priceEntries PriceEntry[]
   orderItems   OrderItem[]
   reviews      Review[]
+  payouts      Payout[]
 
   @@index([marketId, verificationStatus])
   @@map("vendors")
@@ -304,6 +337,7 @@ model Order {
   paymentMethod         String?     @map("payment_method")
   paystackReference     String?     @unique @map("paystack_reference")
   specialInstructions   String?     @map("special_instructions")
+  verificationCode      String?     @map("verification_code") // 6-digit code for delivery confirmation
   createdAt             DateTime    @default(now()) @map("created_at")
   updatedAt             DateTime    @updatedAt @map("updated_at")
 
@@ -315,6 +349,7 @@ model Order {
   whatsappMessages WhatsappMessage[]
   payment          Payment?
   reviews          Review[]
+  disputes         Dispute[]
 
   @@index([userId])
   @@index([status])
@@ -426,8 +461,12 @@ model Artisan {
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 
+  bankAccountNumber  String?            @map("bank_account_number")
+  bankCode           String?            @map("bank_code")
+
   services ArtisanService[]
   reviews  Review[]
+  payouts  Payout[]
 
   @@map("artisans")
 }
@@ -542,4 +581,328 @@ model Review {
   @@index([artisanId, createdAt])
   @@index([orderId])
   @@map("reviews")
+}
+
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+
+enum NotificationType {
+  GROUP_BUY_NEW
+  GROUP_BUY_ALMOST_FULL
+  GROUP_BUY_FULL
+  GROUP_BUY_PAYMENT_REMINDER
+  GROUP_BUY_SLOT_RELEASED
+  GROUP_BUY_WAITLIST_OFFER
+  GROUP_BUY_CONFIRMED
+  GROUP_BUY_CANCELLED
+  GROUP_BUY_FULFILLED
+  GROUP_BUY_RESERVATION_CONFIRMED
+  ORDER_STATUS
+  GENERAL
+  CLEANING_SUBMITTED
+  CLEANING_INSPECTION_SCHEDULED
+  CLEANING_QUOTED
+  CLEANING_DEPOSIT_CONFIRMED
+  CLEANING_ASSIGNED
+  CLEANING_IN_PROGRESS
+  CLEANING_COMPLETED
+  CLEANING_CANCELLED
+
+  @@map("notification_type")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  body      String
+  data      String?          // JSON-stringified extra metadata (eventId, orderId, etc.)
+  isRead    Boolean          @default(false) @map("is_read")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
+}
+
+// ─── GROUP BUY ────────────────────────────────────────────────────────────────
+
+enum GroupBuyStatus {
+  OPEN
+  FULL
+  PAYING
+  CONFIRMED
+  CANCELLED
+  FULFILLED
+
+  @@map("group_buy_status")
+}
+
+enum GroupBuySlotStatus {
+  RESERVED
+  PAID
+  RELEASED
+  REFUNDED
+
+  @@map("group_buy_slot_status")
+}
+
+enum GroupBuyWaitlistStatus {
+  WAITING
+  OFFERED
+  EXPIRED
+  CONVERTED
+
+  @@map("group_buy_waitlist_status")
+}
+
+model GroupBuyEvent {
+  id                   String         @id @default(uuid())
+  title                String
+  description          String?
+  imageUrl             String?        @map("image_url")
+  totalSlots           Int            @map("total_slots")
+  slotsRemaining       Int            @map("slots_remaining")
+  pricePerSlotNgn      Decimal        @map("price_per_slot_ngn") @db.Decimal(12, 2)
+  maxSlotsPerCustomer  Int            @default(3) @map("max_slots_per_customer")
+  paymentDeadlineHours Int            @default(24) @map("payment_deadline_hours")
+  reservationDeadline  DateTime       @map("reservation_deadline")
+  status               GroupBuyStatus @default(OPEN)
+  createdBy            String         @map("created_by")
+  deletedAt            DateTime?      @map("deleted_at") // soft delete
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+
+  creator  User               @relation("GroupBuyCreator", fields: [createdBy], references: [id])
+  slots    GroupBuySlot[]
+  waitlist GroupBuyWaitlist[]
+
+  @@index([status, deletedAt])
+  @@index([reservationDeadline, status])
+  @@map("group_buy_events")
+}
+
+model GroupBuySlot {
+  id               String             @id @default(uuid())
+  eventId          String             @map("event_id")
+  customerId       String             @map("customer_id")
+  slotsCount       Int                @map("slots_count")
+  status           GroupBuySlotStatus @default(RESERVED)
+  paymentReference String?            @unique @map("payment_reference")
+  paidAt           DateTime?          @map("paid_at")
+  reservedAt       DateTime           @default(now()) @map("reserved_at")
+  paymentDeadline  DateTime?          @map("payment_deadline") // set when event → FULL
+
+  event    GroupBuyEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  customer User          @relation("GroupBuyCustomer", fields: [customerId], references: [id])
+
+  @@unique([eventId, customerId]) // one reservation per customer per event
+  @@index([eventId, status])
+  @@index([customerId])
+  @@index([status, paymentDeadline]) // for expiry job
+  @@map("group_buy_slots")
+}
+
+model GroupBuyWaitlist {
+  id          String                 @id @default(uuid())
+  eventId     String                 @map("event_id")
+  customerId  String                 @map("customer_id")
+  slotsWanted Int                    @map("slots_wanted")
+  status      GroupBuyWaitlistStatus @default(WAITING)
+  notifiedAt  DateTime?              @map("notified_at") // when the offer was sent
+  joinedAt    DateTime               @default(now()) @map("joined_at")
+
+  event    GroupBuyEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  customer User          @relation("GroupBuyWaitlistCustomer", fields: [customerId], references: [id])
+
+  @@unique([eventId, customerId]) // one waitlist entry per customer per event
+  @@index([eventId, status, joinedAt]) // FIFO ordering for waitlist progression
+  @@index([customerId])
+  @@index([status, notifiedAt]) // for offer-expiry job
+  @@map("group_buy_waitlist")
+}
+
+// ─── PAYOUTS & DISPUTES ───────────────────────────────────────────────────────
+
+model Payout {
+  id                 String       @id @default(uuid())
+  vendorId           String?      @map("vendor_id")
+  artisanId          String?      @map("artisan_id")
+  amount             Decimal      @db.Decimal(12, 2)
+  status             PayoutStatus @default(PENDING)
+  transferId         String?      @map("transfer_id")
+  bankAccountNumber  String       @map("bank_account_number")
+  bankCode           String       @map("bank_code")
+  bankName           String?      @map("bank_name")
+  reference          String       @unique
+  failureReason      String?      @map("failure_reason")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  vendor             Vendor?      @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  artisan            Artisan?     @relation(fields: [artisanId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("payouts")
+}
+
+enum PayoutStatus {
+  PENDING
+  SUCCESSFUL
+  FAILED
+  REJECTED
+
+  @@map("payout_status")
+}
+
+model Dispute {
+  id            String        @id @default(uuid())
+  orderId       String        @map("order_id")
+  userId        String        @map("user_id") // customer raising the dispute
+  reason        String
+  description   String
+  status        DisputeStatus @default(OPEN)
+  resolution    String?
+  resolvedAt    DateTime?     @map("resolved_at")
+  resolvedBy    String?       @map("resolved_by")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("disputes")
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_INVESTIGATION
+  RESOLVED
+  REJECTED
+
+  @@map("dispute_status")
+}
+
+// ─── CLEANING SERVICES ────────────────────────────────────────────────────────
+
+enum CleaningCategory {
+  HOME
+  OFFICE
+  CONSTRUCTION
+
+  @@map("cleaning_category")
+}
+
+enum AssessmentType {
+  REMOTE
+  IN_PERSON
+
+  @@map("assessment_type")
+}
+
+enum CleaningStatus {
+  PENDING_QUOTE         // submitted, waiting for admin to price
+  INSPECTION_SCHEDULED  // admin scheduled in-person visit (OFFICE/CONSTRUCTION)
+  QUOTED                // admin sent a quote, awaiting customer acceptance
+  DEPOSIT_PAID          // deposit received, pending assignment
+  ASSIGNED              // cleaner assigned
+  IN_PROGRESS           // cleaning underway
+  COMPLETED             // done
+  CANCELLED
+
+  @@map("cleaning_status")
+}
+
+model CleaningRequest {
+  id              String           @id @default(uuid())
+  requestNumber   String           @unique @map("request_number") // CLN-XXXXXXXX
+  userId          String           @map("user_id")
+
+  // Service details
+  category        CleaningCategory
+  serviceTypes    String[]         @map("service_types")   // e.g. ["Deep cleaning", "Laundry add-on"]
+
+  // Property details
+  propertyType    String?          @map("property_type")   // "self-contained", "1-bed", "2-bed", "3-bed"
+  squareFootage   Int?             @map("square_footage")  // OFFICE / CONSTRUCTION
+  roomCount       Int?             @map("room_count")      // OFFICE: number of rooms/workstations
+  isRecurring     Boolean          @default(false) @map("is_recurring")
+  recurringFreq   String?          @map("recurring_freq")  // "daily", "weekly"
+
+  // Location & timing
+  location        String
+  preferredDate   DateTime         @map("preferred_date")
+  preferredTime   String?          @map("preferred_time")  // e.g. "09:00"
+
+  // Contact person (for OFFICE / CONSTRUCTION in-person assessments)
+  contactPersonName   String?      @map("contact_person_name")
+  contactPersonPhone  String?      @map("contact_person_phone")
+  contactPersonEmail  String?      @map("contact_person_email")
+  contactPersonRole   String?      @map("contact_person_role")   // e.g. "Facility Manager"
+
+  // Office-specific details
+  floorCount          Int?         @map("floor_count")
+  officeLayout        String?      @map("office_layout")         // "open-plan", "cubicles", etc.
+  specialZones        String[]     @map("special_zones")          // ["server room", "boardroom"]
+  cleanersNeeded      Int?         @map("cleaners_needed")
+  janitorsNeeded      Int?         @map("janitors_needed")
+
+  // Construction-specific details
+  constructionType    String?      @map("construction_type")     // "residential", "commercial", "industrial"
+  constructionStage   String?      @map("construction_stage")    // "post-foundation", "finishing", "handover"
+  siteAccessHours     String?      @map("site_access_hours")     // "08:00-17:00"
+  heavyEquipmentOnSite Boolean     @default(false) @map("heavy_equipment_on_site")
+  plotSize            String?      @map("plot_size")             // "500 sqm", "2 acres"
+
+  // Assessment type
+  assessmentType      AssessmentType @default(REMOTE) @map("assessment_type")
+
+  // Inspection workflow (OFFICE medium/large and CONSTRUCTION)
+  inspectionScheduledAt  DateTime? @map("inspection_scheduled_at")
+  inspectionNote         String?   @map("inspection_note")
+  crewSizeRecommended    Int?      @map("crew_size_recommended")
+  inspectionCompletedAt  DateTime? @map("inspection_completed_at")
+
+  // Before/after photos + handover
+  beforePhotoUrls     String[]     @map("before_photo_urls")
+  afterPhotoUrls      String[]     @map("after_photo_urls")
+  handoverNote        String?      @map("handover_note")
+
+  // Media & notes
+  photoUrls       String[]         @map("photo_urls")
+  specialRequest  String?          @map("special_request")
+
+  // Admin quote (filled after review)
+  quoteAmountNgn  Decimal?         @map("quote_amount_ngn") @db.Decimal(12, 2)
+  depositAmountNgn Decimal?        @map("deposit_amount_ngn") @db.Decimal(12, 2)
+  quoteNotes      String?          @map("quote_notes")
+  quotedAt        DateTime?        @map("quoted_at")
+  quotedBy        String?          @map("quoted_by")       // admin userId
+
+  // Assignment
+  assignedCleanerName  String?     @map("assigned_cleaner_name")
+  assignedCleanerPhone String?     @map("assigned_cleaner_phone")
+  assignedAt      DateTime?        @map("assigned_at")
+
+  // Payment
+  paymentReference String?         @map("payment_reference") // CLN-XXXX-<attempt> prefix (not unique; new ref per attempt)
+  depositAttempts  Int             @default(0) @map("deposit_attempts")
+  depositPaidAt   DateTime?        @map("deposit_paid_at")
+
+  // Lifecycle
+  status          CleaningStatus   @default(PENDING_QUOTE)
+  completedAt     DateTime?        @map("completed_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([category, status])
+  @@index([createdAt])
+  @@index([status, inspectionScheduledAt])
+  @@map("cleaning_requests")
 }

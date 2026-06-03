@@ -29,7 +29,6 @@ const profileUpdateSchema = z.object({
   bio: z.string().optional(),
   phone: z.string().optional(),
   portfolioImages: z.array(z.string()).optional(),
-  verificationStatus: z.enum(['PENDING', 'VERIFIED', 'SUSPENDED']).optional(),
   isAvailable: z.boolean().optional()
 });
 
