@@ -139,6 +139,7 @@ app.use((req, _res, next) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/markets', marketRoutes);
+app.use('/api/marketplace', marketRoutes); // Fallback alias for marketplace requests
 app.use('/api/checkout', checkoutRoutes);
 app.use('/api/artisans', artisanRoutes);
 app.use('/api/shortlets', shortletRoutes);

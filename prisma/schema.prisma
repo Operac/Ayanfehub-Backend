@@ -25,18 +25,18 @@ model User {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  addresses        DeliveryAddress[]
-  orders           Order[]
-  whatsappMessages WhatsappMessage[]
-  reviews          Review[]
-  notifications    Notification[]
-  groupBuyEventsCreated GroupBuyEvent[]    @relation("GroupBuyCreator")
-  groupBuySlots         GroupBuySlot[]     @relation("GroupBuyCustomer")
-  groupBuyWaitlist      GroupBuyWaitlist[] @relation("GroupBuyWaitlistCustomer")
-  disputes         Dispute[]
-  cleaningRequests CleaningRequest[]
-  partnerApplications PartnerApplication[] @relation("UserPartnerApplications")
-  supportMessages     SupportMessage[]     @relation("UserSupportMessages")
+  addresses             DeliveryAddress[]
+  orders                Order[]
+  whatsappMessages      WhatsappMessage[]
+  reviews               Review[]
+  notifications         Notification[]
+  groupBuyEventsCreated GroupBuyEvent[]      @relation("GroupBuyCreator")
+  groupBuySlots         GroupBuySlot[]       @relation("GroupBuyCustomer")
+  groupBuyWaitlist      GroupBuyWaitlist[]   @relation("GroupBuyWaitlistCustomer")
+  disputes              Dispute[]
+  cleaningRequests      CleaningRequest[]
+  partnerApplications   PartnerApplication[] @relation("UserPartnerApplications")
+  supportMessages       SupportMessage[]     @relation("UserSupportMessages")
 
   @@map("users")
 }
@@ -96,7 +96,7 @@ model RunDay {
   marketId              String  @map("market_id")
   dayOfWeek             Int     @map("day_of_week") // 0=Sun 6=Sat
   cutoffHour            Int     @default(20) @map("cutoff_hour")
-  cutoffMinute          Int     @default(0)  @map("cutoff_minute")
+  cutoffMinute          Int     @default(0) @map("cutoff_minute")
   isMasterConsolidation Boolean @default(false) @map("is_master_consolidation")
 
   market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
@@ -125,7 +125,7 @@ model MarketDeliveryRate {
   id             String   @id @default(uuid())
   marketId       String   @map("market_id")
   deliveryZoneId String   @map("delivery_zone_id")
-  priceNgn       Decimal  @db.Decimal(12, 2) @map("price_ngn")
+  priceNgn       Decimal  @map("price_ngn") @db.Decimal(12, 2)
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   market       Market       @relation(fields: [marketId], references: [id], onDelete: Cascade)
@@ -221,24 +221,24 @@ model Category {
 // ─── PRODUCTS ─────────────────────────────────────────────────────────────────
 
 model Product {
-  id               String                 @id @default(uuid())
-  vendorId         String                 @map("vendor_id")
-  marketId         String                 @map("market_id")
-  categoryId       String?                @map("category_id")
+  id               String                @id @default(uuid())
+  vendorId         String                @map("vendor_id")
+  marketId         String                @map("market_id")
+  categoryId       String?               @map("category_id")
   name             String
   description      String?
   unit             String // "kg", "paint bucket", "bag (50kg)", "dozen"
-  minOrderQuantity Decimal                @default(1) @map("min_order_quantity") @db.Decimal(10, 2)
-  imageUrls        String[]               @map("image_urls")
-  isSeasonal       Boolean                @default(false) @map("is_seasonal")
-  isActive         Boolean                @default(true) @map("is_active")
-  stockQuantity    Int?                   @map("stock_quantity")      // null = unlimited
-  reservedQuantity Int                    @default(0) @map("reserved_quantity")
-  approvalStatus   ProductApprovalStatus  @default(APPROVED) @map("approval_status")
-  approvedAt       DateTime?              @map("approved_at")
-  approvedBy       String?                @map("approved_by")
-  rejectionReason  String?                @map("rejection_reason")
-  createdAt        DateTime               @default(now()) @map("created_at")
+  minOrderQuantity Decimal               @default(1) @map("min_order_quantity") @db.Decimal(10, 2)
+  imageUrls        String[]              @map("image_urls")
+  isSeasonal       Boolean               @default(false) @map("is_seasonal")
+  isActive         Boolean               @default(true) @map("is_active")
+  stockQuantity    Int?                  @map("stock_quantity") // null = unlimited
+  reservedQuantity Int                   @default(0) @map("reserved_quantity")
+  approvalStatus   ProductApprovalStatus @default(APPROVED) @map("approval_status")
+  approvedAt       DateTime?             @map("approved_at")
+  approvedBy       String?               @map("approved_by")
+  rejectionReason  String?               @map("rejection_reason")
+  createdAt        DateTime              @default(now()) @map("created_at")
 
   vendor       Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
   category     Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -265,14 +265,14 @@ model MarketAgent {
   id                       String      @id @default(uuid())
   fullName                 String      @map("full_name")
   phone                    String      @unique
-  marketId                 String      @map("market_id")
+  marketId                 String?     @map("market_id")
   employmentStatus         AgentStatus @default(ACTIVE) @map("employment_status")
   totalVerifiedSubmissions Int         @default(0) @map("total_verified_submissions")
   accuracyScore            Decimal?    @map("accuracy_score") @db.Decimal(5, 2)
   createdAt                DateTime    @default(now()) @map("created_at")
   updatedAt                DateTime    @updatedAt @map("updated_at")
 
-  market       Market       @relation(fields: [marketId], references: [id], onDelete: SetNull)
+  market       Market?      @relation(fields: [marketId], references: [id], onDelete: SetNull)
   priceEntries PriceEntry[]
   orderItems   OrderItem[]
 
@@ -463,8 +463,8 @@ model Artisan {
   createdAt          DateTime           @default(now()) @map("created_at")
   updatedAt          DateTime           @updatedAt @map("updated_at")
 
-  bankAccountNumber  String?            @map("bank_account_number")
-  bankCode           String?            @map("bank_code")
+  bankAccountNumber String? @map("bank_account_number")
+  bankCode          String? @map("bank_code")
 
   services ArtisanService[]
   reviews  Review[]
@@ -491,18 +491,18 @@ model ArtisanService {
 // ─── SHORTLETS ────────────────────────────────────────────────────────────────
 
 model Apartment {
-  id           String   @id @default(uuid())
-  userId       String?  @map("user_id")
-  name         String
-  location     String
-  ratePerNight Decimal  @map("rate_per_night") @db.Decimal(10, 2)
-  images       String[]
-  isAvailable  Boolean  @default(true) @map("is_available")
-  isVerified   Boolean  @default(false) @map("is_verified")
-  amenities    String[]
-  createdByAdmin Boolean @default(false) @map("created_by_admin")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id             String   @id @default(uuid())
+  userId         String?  @map("user_id")
+  name           String
+  location       String
+  ratePerNight   Decimal  @map("rate_per_night") @db.Decimal(10, 2)
+  images         String[]
+  isAvailable    Boolean  @default(true) @map("is_available")
+  isVerified     Boolean  @default(false) @map("is_verified")
+  amenities      String[]
+  createdByAdmin Boolean  @default(false) @map("created_by_admin")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   @@map("apartments")
 }
@@ -618,7 +618,7 @@ model Notification {
   type      NotificationType
   title     String
   body      String
-  data      String?          // JSON-stringified extra metadata (eventId, orderId, etc.)
+  data      String? // JSON-stringified extra metadata (eventId, orderId, etc.)
   isRead    Boolean          @default(false) @map("is_read")
   createdAt DateTime         @default(now()) @map("created_at")
 
@@ -728,22 +728,22 @@ model GroupBuyWaitlist {
 // ─── PAYOUTS & DISPUTES ───────────────────────────────────────────────────────
 
 model Payout {
-  id                 String       @id @default(uuid())
-  vendorId           String?      @map("vendor_id")
-  artisanId          String?      @map("artisan_id")
-  amount             Decimal      @db.Decimal(12, 2)
-  status             PayoutStatus @default(PENDING)
-  transferId         String?      @map("transfer_id")
-  bankAccountNumber  String       @map("bank_account_number")
-  bankCode           String       @map("bank_code")
-  bankName           String?      @map("bank_name")
-  reference          String       @unique
-  failureReason      String?      @map("failure_reason")
-  createdAt          DateTime     @default(now()) @map("created_at")
-  updatedAt          DateTime     @updatedAt @map("updated_at")
+  id                String       @id @default(uuid())
+  vendorId          String?      @map("vendor_id")
+  artisanId         String?      @map("artisan_id")
+  amount            Decimal      @db.Decimal(12, 2)
+  status            PayoutStatus @default(PENDING)
+  transferId        String?      @map("transfer_id")
+  bankAccountNumber String       @map("bank_account_number")
+  bankCode          String       @map("bank_code")
+  bankName          String?      @map("bank_name")
+  reference         String       @unique
+  failureReason     String?      @map("failure_reason")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
 
-  vendor             Vendor?      @relation(fields: [vendorId], references: [id], onDelete: SetNull)
-  artisan            Artisan?     @relation(fields: [artisanId], references: [id], onDelete: SetNull)
+  vendor  Vendor?  @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  artisan Artisan? @relation(fields: [artisanId], references: [id], onDelete: SetNull)
 
   @@index([status])
   @@map("payouts")
@@ -759,17 +759,17 @@ enum PayoutStatus {
 }
 
 model Dispute {
-  id            String        @id @default(uuid())
-  orderId       String        @map("order_id")
-  userId        String        @map("user_id") // customer raising the dispute
-  reason        String
-  description   String
-  status        DisputeStatus @default(OPEN)
-  resolution    String?
-  resolvedAt    DateTime?     @map("resolved_at")
-  resolvedBy    String?       @map("resolved_by")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
+  id          String        @id @default(uuid())
+  orderId     String        @map("order_id")
+  userId      String        @map("user_id") // customer raising the dispute
+  reason      String
+  description String
+  status      DisputeStatus @default(OPEN)
+  resolution  String?
+  resolvedAt  DateTime?     @map("resolved_at")
+  resolvedBy  String?       @map("resolved_by")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -805,99 +805,99 @@ enum AssessmentType {
 }
 
 enum CleaningStatus {
-  PENDING_QUOTE         // submitted, waiting for admin to price
-  INSPECTION_SCHEDULED  // admin scheduled in-person visit (OFFICE/CONSTRUCTION)
-  QUOTED                // admin sent a quote, awaiting customer acceptance
-  DEPOSIT_PAID          // deposit received, pending assignment
-  ASSIGNED              // cleaner assigned
-  IN_PROGRESS           // cleaning underway
-  COMPLETED             // done
+  PENDING_QUOTE // submitted, waiting for admin to price
+  INSPECTION_SCHEDULED // admin scheduled in-person visit (OFFICE/CONSTRUCTION)
+  QUOTED // admin sent a quote, awaiting customer acceptance
+  DEPOSIT_PAID // deposit received, pending assignment
+  ASSIGNED // cleaner assigned
+  IN_PROGRESS // cleaning underway
+  COMPLETED // done
   CANCELLED
 
   @@map("cleaning_status")
 }
 
 model CleaningRequest {
-  id              String           @id @default(uuid())
-  requestNumber   String           @unique @map("request_number") // CLN-XXXXXXXX
-  userId          String           @map("user_id")
+  id            String @id @default(uuid())
+  requestNumber String @unique @map("request_number") // CLN-XXXXXXXX
+  userId        String @map("user_id")
 
   // Service details
-  category        CleaningCategory
-  serviceTypes    String[]         @map("service_types")   // e.g. ["Deep cleaning", "Laundry add-on"]
+  category     CleaningCategory
+  serviceTypes String[]         @map("service_types") // e.g. ["Deep cleaning", "Laundry add-on"]
 
   // Property details
-  propertyType    String?          @map("property_type")   // "self-contained", "1-bed", "2-bed", "3-bed"
-  squareFootage   Int?             @map("square_footage")  // OFFICE / CONSTRUCTION
-  roomCount       Int?             @map("room_count")      // OFFICE: number of rooms/workstations
-  isRecurring     Boolean          @default(false) @map("is_recurring")
-  recurringFreq   String?          @map("recurring_freq")  // "daily", "weekly"
+  propertyType  String? @map("property_type") // "self-contained", "1-bed", "2-bed", "3-bed"
+  squareFootage Int?    @map("square_footage") // OFFICE / CONSTRUCTION
+  roomCount     Int?    @map("room_count") // OFFICE: number of rooms/workstations
+  isRecurring   Boolean @default(false) @map("is_recurring")
+  recurringFreq String? @map("recurring_freq") // "daily", "weekly"
 
   // Location & timing
-  location        String
-  preferredDate   DateTime         @map("preferred_date")
-  preferredTime   String?          @map("preferred_time")  // e.g. "09:00"
+  location      String
+  preferredDate DateTime @map("preferred_date")
+  preferredTime String?  @map("preferred_time") // e.g. "09:00"
 
   // Contact person (for OFFICE / CONSTRUCTION in-person assessments)
-  contactPersonName   String?      @map("contact_person_name")
-  contactPersonPhone  String?      @map("contact_person_phone")
-  contactPersonEmail  String?      @map("contact_person_email")
-  contactPersonRole   String?      @map("contact_person_role")   // e.g. "Facility Manager"
+  contactPersonName  String? @map("contact_person_name")
+  contactPersonPhone String? @map("contact_person_phone")
+  contactPersonEmail String? @map("contact_person_email")
+  contactPersonRole  String? @map("contact_person_role") // e.g. "Facility Manager"
 
   // Office-specific details
-  floorCount          Int?         @map("floor_count")
-  officeLayout        String?      @map("office_layout")         // "open-plan", "cubicles", etc.
-  specialZones        String[]     @map("special_zones")          // ["server room", "boardroom"]
-  cleanersNeeded      Int?         @map("cleaners_needed")
-  janitorsNeeded      Int?         @map("janitors_needed")
+  floorCount     Int?     @map("floor_count")
+  officeLayout   String?  @map("office_layout") // "open-plan", "cubicles", etc.
+  specialZones   String[] @map("special_zones") // ["server room", "boardroom"]
+  cleanersNeeded Int?     @map("cleaners_needed")
+  janitorsNeeded Int?     @map("janitors_needed")
 
   // Construction-specific details
-  constructionType    String?      @map("construction_type")     // "residential", "commercial", "industrial"
-  constructionStage   String?      @map("construction_stage")    // "post-foundation", "finishing", "handover"
-  siteAccessHours     String?      @map("site_access_hours")     // "08:00-17:00"
-  heavyEquipmentOnSite Boolean     @default(false) @map("heavy_equipment_on_site")
-  plotSize            String?      @map("plot_size")             // "500 sqm", "2 acres"
+  constructionType     String? @map("construction_type") // "residential", "commercial", "industrial"
+  constructionStage    String? @map("construction_stage") // "post-foundation", "finishing", "handover"
+  siteAccessHours      String? @map("site_access_hours") // "08:00-17:00"
+  heavyEquipmentOnSite Boolean @default(false) @map("heavy_equipment_on_site")
+  plotSize             String? @map("plot_size") // "500 sqm", "2 acres"
 
   // Assessment type
-  assessmentType      AssessmentType @default(REMOTE) @map("assessment_type")
+  assessmentType AssessmentType @default(REMOTE) @map("assessment_type")
 
   // Inspection workflow (OFFICE medium/large and CONSTRUCTION)
-  inspectionScheduledAt  DateTime? @map("inspection_scheduled_at")
-  inspectionNote         String?   @map("inspection_note")
-  crewSizeRecommended    Int?      @map("crew_size_recommended")
-  inspectionCompletedAt  DateTime? @map("inspection_completed_at")
+  inspectionScheduledAt DateTime? @map("inspection_scheduled_at")
+  inspectionNote        String?   @map("inspection_note")
+  crewSizeRecommended   Int?      @map("crew_size_recommended")
+  inspectionCompletedAt DateTime? @map("inspection_completed_at")
 
   // Before/after photos + handover
-  beforePhotoUrls     String[]     @map("before_photo_urls")
-  afterPhotoUrls      String[]     @map("after_photo_urls")
-  handoverNote        String?      @map("handover_note")
+  beforePhotoUrls String[] @map("before_photo_urls")
+  afterPhotoUrls  String[] @map("after_photo_urls")
+  handoverNote    String?  @map("handover_note")
 
   // Media & notes
-  photoUrls       String[]         @map("photo_urls")
-  specialRequest  String?          @map("special_request")
+  photoUrls      String[] @map("photo_urls")
+  specialRequest String?  @map("special_request")
 
   // Admin quote (filled after review)
-  quoteAmountNgn  Decimal?         @map("quote_amount_ngn") @db.Decimal(12, 2)
-  depositAmountNgn Decimal?        @map("deposit_amount_ngn") @db.Decimal(12, 2)
-  quoteNotes      String?          @map("quote_notes")
-  quotedAt        DateTime?        @map("quoted_at")
-  quotedBy        String?          @map("quoted_by")       // admin userId
+  quoteAmountNgn   Decimal?  @map("quote_amount_ngn") @db.Decimal(12, 2)
+  depositAmountNgn Decimal?  @map("deposit_amount_ngn") @db.Decimal(12, 2)
+  quoteNotes       String?   @map("quote_notes")
+  quotedAt         DateTime? @map("quoted_at")
+  quotedBy         String?   @map("quoted_by") // admin userId
 
   // Assignment
-  assignedCleanerName  String?     @map("assigned_cleaner_name")
-  assignedCleanerPhone String?     @map("assigned_cleaner_phone")
-  assignedAt      DateTime?        @map("assigned_at")
+  assignedCleanerName  String?   @map("assigned_cleaner_name")
+  assignedCleanerPhone String?   @map("assigned_cleaner_phone")
+  assignedAt           DateTime? @map("assigned_at")
 
   // Payment
-  paymentReference String?         @map("payment_reference") // CLN-XXXX-<attempt> prefix (not unique; new ref per attempt)
-  depositAttempts  Int             @default(0) @map("deposit_attempts")
-  depositPaidAt   DateTime?        @map("deposit_paid_at")
+  paymentReference String?   @map("payment_reference") // CLN-XXXX-<attempt> prefix (not unique; new ref per attempt)
+  depositAttempts  Int       @default(0) @map("deposit_attempts")
+  depositPaidAt    DateTime? @map("deposit_paid_at")
 
   // Lifecycle
-  status          CleaningStatus   @default(PENDING_QUOTE)
-  completedAt     DateTime?        @map("completed_at")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
+  status      CleaningStatus @default(PENDING_QUOTE)
+  completedAt DateTime?      @map("completed_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
