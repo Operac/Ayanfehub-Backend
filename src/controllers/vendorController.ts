@@ -334,13 +334,18 @@ export const applyToBeVendor = async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     const schema = z.object({
       businessName: z.string().min(2),
-      marketId: z.string().uuid(),
+      marketId: z.string().uuid().optional(),
+      customMarketName: z.string().min(2).optional(),
       contactName: z.string().min(2),
       phone: z.string().min(10),
       stallReference: z.string().optional()
     });
 
     const data = schema.parse(req.body);
+
+    if (!data.marketId && !data.customMarketName) {
+      return res.status(400).json({ message: 'Please select a market or specify a new market location.' });
+    }
 
     // Check if user already has a vendor profile
     const existing = await prisma.vendor.findFirst({ where: { userId } });
@@ -354,16 +359,48 @@ export const applyToBeVendor = async (req: Request, res: Response) => {
       return res.status(400).json({ message: `Your vendor account status is currently: ${existing.verificationStatus}` });
     }
 
-    // Verify market exists
-    const market = await prisma.market.findUnique({ where: { id: data.marketId } });
-    if (!market) {
-      return res.status(404).json({ message: 'Selected market not found' });
+    // Resolve final market ID
+    let finalMarketId = '';
+    if (data.marketId) {
+      const market = await prisma.market.findUnique({ where: { id: data.marketId } });
+      if (!market) {
+        return res.status(404).json({ message: 'Selected market not found' });
+      }
+      finalMarketId = market.id;
+    } else if (data.customMarketName) {
+      const trimmedName = data.customMarketName.trim();
+      const slug = trimmedName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+
+      // Check if market already exists case-insensitively
+      let existingMarket = await prisma.market.findFirst({
+        where: {
+          OR: [
+            { name: { equals: trimmedName, mode: 'insensitive' } },
+            { slug: slug }
+          ]
+        }
+      });
+
+      if (existingMarket) {
+        finalMarketId = existingMarket.id;
+      } else {
+        // Create new inactive market
+        const newMarket = await prisma.market.create({
+          data: {
+            name: trimmedName,
+            slug,
+            category: 'General',
+            isActive: false
+          }
+        });
+        finalMarketId = newMarket.id;
+      }
     }
 
     const vendor = await prisma.vendor.create({
       data: {
         userId,
-        marketId: data.marketId,
+        marketId: finalMarketId,
         businessName: data.businessName,
         contactName: data.contactName,
         phone: data.phone,

@@ -36,6 +36,7 @@ model User {
   disputes         Dispute[]
   cleaningRequests CleaningRequest[]
   partnerApplications PartnerApplication[] @relation("UserPartnerApplications")
+  supportMessages     SupportMessage[]     @relation("UserSupportMessages")
 
   @@map("users")
 }
@@ -926,4 +927,23 @@ model PartnerApplication {
   user User? @relation("UserPartnerApplications", fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("partner_applications")
+}
+
+// ─── SUPPORT MESSAGES ─────────────────────────────────────────────────────────
+
+model SupportMessage {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  fullName  String   @map("full_name")
+  email     String
+  phone     String?
+  subject   String
+  message   String
+  status    String   @default("OPEN") // "OPEN" | "RESOLVED"
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User? @relation("UserSupportMessages", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("support_messages")
 }
