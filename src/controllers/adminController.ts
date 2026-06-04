@@ -116,6 +116,15 @@ export const updateVendorVerification = async (req: Request, res: Response) => {
       where: { id: vendorId },
       data: { verificationStatus: status as any }
     });
+
+    // If verified, upgrade the associated user's role to VENDOR
+    if (status === 'VERIFIED' && vendor.userId) {
+      await prisma.user.update({
+        where: { id: vendor.userId },
+        data: { role: 'VENDOR' }
+      });
+    }
+
     res.json({ message: 'Vendor status updated', vendor });
   } catch (error) {
     if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });

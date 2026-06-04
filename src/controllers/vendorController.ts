@@ -328,3 +328,59 @@ export const resubmitProduct = async (req: Request, res: Response) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+export const applyToBeVendor = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const schema = z.object({
+      businessName: z.string().min(2),
+      marketId: z.string().uuid(),
+      contactName: z.string().min(2),
+      phone: z.string().min(10),
+      stallReference: z.string().optional()
+    });
+
+    const data = schema.parse(req.body);
+
+    // Check if user already has a vendor profile
+    const existing = await prisma.vendor.findFirst({ where: { userId } });
+    if (existing) {
+      if (existing.verificationStatus === 'VERIFIED') {
+        return res.status(400).json({ message: 'You are already a registered and verified vendor.' });
+      }
+      if (existing.verificationStatus === 'PENDING') {
+        return res.status(400).json({ message: 'You already have a pending vendor application.' });
+      }
+      return res.status(400).json({ message: `Your vendor account status is currently: ${existing.verificationStatus}` });
+    }
+
+    // Verify market exists
+    const market = await prisma.market.findUnique({ where: { id: data.marketId } });
+    if (!market) {
+      return res.status(404).json({ message: 'Selected market not found' });
+    }
+
+    const vendor = await prisma.vendor.create({
+      data: {
+        userId,
+        marketId: data.marketId,
+        businessName: data.businessName,
+        contactName: data.contactName,
+        phone: data.phone,
+        stallReference: data.stallReference || null,
+        verificationStatus: 'PENDING',
+        createdByAdmin: false
+      },
+      include: { market: { select: { name: true } } }
+    });
+
+    res.status(201).json({
+      message: 'Vendor application submitted successfully. An administrator will review your request.',
+      vendor
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ errors: error.issues });
+    logger.error('applyToBeVendor failed', { error });
+    res.status(500).json({ message: 'Server error' });
+  }
+};

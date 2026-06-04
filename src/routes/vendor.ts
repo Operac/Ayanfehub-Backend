@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import {
   getMyVendorProfile, getMyProducts, updateMyProduct,
   getMyVendorOrders, getVendorStats, uploadProductImage, uploadProduct, updateProductPrice,
-  resubmitProduct
+  resubmitProduct, applyToBeVendor
 } from '../controllers/vendorController';
 import { authenticate } from '../middleware/auth';
 import { productImageUpload } from '../middleware/upload';
@@ -18,6 +18,10 @@ const requireVendor = (req: Request, res: Response, next: NextFunction) => {
 };
 
 router.use(authenticate);
+
+// Public applicant endpoint - user wants to become a vendor
+router.post('/apply', applyToBeVendor);
+
 router.use(requireVendor);
 
 router.get('/me', getMyVendorProfile);

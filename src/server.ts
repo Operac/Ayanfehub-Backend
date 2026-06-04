@@ -21,6 +21,7 @@ import payoutRoutes from './routes/payout';
 import disputeRoutes from './routes/dispute';
 import notificationRoutes from './routes/notifications';
 import cleaningRoutes from './routes/cleaning';
+import partnerRoutes from './routes/partner';
 import logger from './utils/logger';
 import { startOrderExpiryJob } from './services/orderExpiryJob';
 import { startGroupBuyJobs } from './services/groupBuyJobs';
@@ -150,6 +151,7 @@ app.use('/api/payouts', payoutRoutes);
 app.use('/api/disputes', disputeRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/cleaning', cleaningRoutes);
+app.use('/api/partners', partnerRoutes);
 
 // Health Check
 app.get('/', (_req: Request, res: Response) => {
